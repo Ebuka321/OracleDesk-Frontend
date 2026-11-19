@@ -45,10 +45,10 @@ function MarketTape({ id, limit, compact }: { id: string; limit: number; compact
               <td className="px-2"><time dateTime={row.closedAt ?? undefined} title={row.closedAt ?? "Ledger close time has not arrived yet"}>{row.closedAt ? relativeTime(row.closedAt, query.dataUpdatedAt) : `Ledger ${row.ledger}`}</time>{row.origin === "socket" && <span className="ml-1 text-on-surface-variant">live</span>}</td>
               <td className={`px-2 font-bold ${row.outcome === "Yes" ? "text-secondary" : "text-tertiary"}`}>{row.outcome.toUpperCase()}</td>
               <td className="px-2">{row.isBuy ? "BUY" : "SELL"}</td>
-              <td className="px-2"><a href={explorerAccount(row.trader)} target="_blank" rel="noreferrer" className="text-primary underline">{row.trader === address ? "you" : shortAddress(row.trader)}</a></td>
+              <td className="px-2"><a href={explorerAccount(row.trader) ?? undefined} target="_blank" rel="noreferrer" className="text-primary underline">{row.trader === address ? "you" : shortAddress(row.trader)}</a></td>
               {[row.collateral, row.shares, row.fee].map((value, index) => <td key={titles[index + 4]} className="px-2 text-right" title={formatUsdc(value, { maxDecimals: 7 })}>{formatUsdc(value, { maxDecimals: index === 2 ? 7 : 2, grouping: true })}</td>)}
               <td className="px-2 text-right">{(row.yesBpsAfter / 100).toFixed(2)}%{movement !== null && <span aria-label={`${movement >= 0 ? "up" : "down"} ${Math.abs(movement)} basis points`}> {movement > 0 ? "↑" : movement < 0 ? "↓" : "→"}</span>}</td>
-              <td className="px-2"><a href={explorerTx(row.txHash)} target="_blank" rel="noreferrer" className="text-primary underline" aria-label={`View transaction ${row.txHash}`}>{row.txHash.slice(0, 8)}…</a></td>
+              <td className="px-2"><a href={explorerTx(row.txHash) ?? undefined} target="_blank" rel="noreferrer" className="text-primary underline" aria-label={`View transaction ${row.txHash}`}>{row.txHash.slice(0, 8)}…</a></td>
             </tr>;
           })}
           {last < rows.length && <tr aria-hidden="true"><td colSpan={9} style={{ height: (rows.length - last) * ROW_HEIGHT }} /></tr>}

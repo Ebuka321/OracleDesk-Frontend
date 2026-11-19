@@ -69,7 +69,7 @@ function EvidenceDrawer({ entry }: { entry: JournalEntry }) {
           <>
             <dt>Settlement</dt>
             <dd>
-              <a href={explorerTx(entry.settlementTxHash)} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+              <a href={explorerTx(entry.settlementTxHash) ?? undefined} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
                 {entry.settlementTxHash}
               </a>
             </dd>

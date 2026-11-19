@@ -31,7 +31,7 @@ export function PendingCopyTrades() {
           <p role="status" className="mt-1">{entry.state === "confirmed" ? "Trade done and recorded." : entry.state === "initiated" ? "No submitted transaction has been recorded yet." : entry.state}</p>
           {entry.lastError && <p className="mt-1 text-on-surface-variant">{entry.lastError}</p>}
           <div className="mt-2 flex flex-wrap gap-4">
-            <a href={entry.txHash ? explorerTx(entry.txHash) : explorerAccount(address)} target="_blank" rel="noopener noreferrer" className="underline">{entry.txHash ? "View transaction" : "Check account history"}</a>
+            <a href={(entry.txHash ? explorerTx(entry.txHash) : explorerAccount(address)) ?? undefined} target="_blank" rel="noopener noreferrer" className="underline">{entry.txHash ? "View transaction" : "Check account history"}</a>
             {entry.state !== "confirmed" && <button type="button" disabled={!entry.txHash || entry.state === "mismatch" || entry.state === "abandoned" || entry.needsSession} onClick={() => retry(entry.copyTradeId)} className="underline disabled:opacity-40">Retry recording</button>}
             <button type="button" onClick={() => dismiss(entry.copyTradeId)} className="underline">Dismiss</button>
           </div>

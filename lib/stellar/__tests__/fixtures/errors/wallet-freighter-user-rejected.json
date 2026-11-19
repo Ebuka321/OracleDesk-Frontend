@@ -1,0 +1,16 @@
+{
+  "id": "wallet/freighter/user-rejected",
+  "source": "wallet",
+  "capturedWith": {
+    "sdk": "16.3.1",
+    "kit": "2.5.0",
+    "wallet": "freighter"
+  },
+  "error": {
+    "name": "UserRejectedError",
+    "message": "The user rejected this request."
+  },
+  "expect": {
+    "kind": "rejected"
+  }
+}

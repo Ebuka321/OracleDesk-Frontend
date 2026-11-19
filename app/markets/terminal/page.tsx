@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import { Icon, type IconName } from "@/components/ui/icon";
 
 import React, { useState, useEffect, useRef } from "react";
@@ -80,9 +81,11 @@ export default function MarketTerminal() {
           </div>        </div>
         <div className="lg:col-span-4 relative">
           <div className="w-full aspect-square rounded-xl overflow-hidden shadow-2xl border border-outline-variant bg-white">
-            <img 
-              className="w-full h-full object-cover" 
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDdeD9deNHyx0wMXT02w2_lLmSBjxZpY7tClRhEtvoAJiEwcrTQyz-nCWt-Qr_kCaBccro0LEhL_Fbpon7QfNWkpTe1dQnaAyC-68UeS-N0P5Iq8gaCnLGI8JTATTIblvUZp_Y0yPz2vN2sMKilhAv5ihKpTEVVp_-qiqJ8I9_AjwPIKkqGTcGna2lpGcFg3PHpZ-ZKE9o1VS14P-LKnFZmQHU4cldP5yqhPBtlRx5pp-GrG2elWGhsp8MV7BguvmB3R4qAZ0292w" 
+            <Image
+              width={512}
+              height={512}
+              className="w-full h-full object-cover"
+              src="/images/terminal-hero.webp"
               alt="Institutional Terminal Interface"
             />
           </div>

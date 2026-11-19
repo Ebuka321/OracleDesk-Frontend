@@ -1,0 +1,16 @@
+{
+  "id": "wallet/walletconnect/no-session",
+  "source": "wallet",
+  "capturedWith": {
+    "sdk": "16.3.1",
+    "kit": "2.5.0",
+    "wallet": "walletconnect"
+  },
+  "error": {
+    "name": "Error",
+    "message": "No WalletConnect session found for the selected address."
+  },
+  "expect": {
+    "kind": "disconnected"
+  }
+}

@@ -126,10 +126,10 @@ export function TreasuryRiskLimits({ backendCapitalRaw }: { backendCapitalRaw: s
 
       {cfg && (
         <div className="mt-4 flex flex-wrap gap-4 text-sm">
-          <a className="underline" href={explorerAccount(CONTRACTS.treasury)} target="_blank" rel="noopener noreferrer">
+          <a className="underline" href={explorerAccount(CONTRACTS.treasury) ?? undefined} target="_blank" rel="noopener noreferrer">
             Treasury contract on Stellar Expert
           </a>
-          <a className="underline" href={explorerAccount(cfg.agent)} target="_blank" rel="noopener noreferrer">
+          <a className="underline" href={explorerAccount(cfg.agent) ?? undefined} target="_blank" rel="noopener noreferrer">
             Agent account on Stellar Expert
           </a>
         </div>

@@ -1,0 +1,19 @@
+{
+  "id": "sim/treasury/daily-cap",
+  "source": "simulation",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "Error",
+    "message": "HostError: Error(Contract, #7)"
+  },
+  "context": {
+    "contract": "treasury"
+  },
+  "expect": {
+    "kind": "contract",
+    "code": "DailyCapExceeded",
+    "contract": "treasury"
+  }
+}

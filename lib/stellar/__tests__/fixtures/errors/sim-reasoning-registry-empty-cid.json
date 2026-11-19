@@ -1,0 +1,19 @@
+{
+  "id": "sim/reasoning-registry/empty-cid",
+  "source": "simulation",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "Error",
+    "message": "HostError: Error(Contract, #7)"
+  },
+  "context": {
+    "contract": "reasoningRegistry"
+  },
+  "expect": {
+    "kind": "contract",
+    "code": "EmptyCid",
+    "contract": "reasoningRegistry"
+  }
+}

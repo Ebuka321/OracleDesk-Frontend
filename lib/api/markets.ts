@@ -1,4 +1,8 @@
-import { apiClient, type ApiRequestOptions } from "./client";
+import { apiClient, apiPath, type ApiRequestOptions } from "./client";
+import { assertValid, parseSlugId, parseU64, parseUuid } from "@/lib/validation/ids";
+
+const marketId = (id: string) => assertValid(parseUuid(id) ?? parseSlugId(id), "market id");
+const jobId = (id: string) => assertValid(parseUuid(id) ?? parseSlugId(id), "job id");
 
 export type MarketCategory = "FED" | "ECB" | "ELECTION" | "GEOPOLITICAL" | "CRYPTO" | "MACRO" | "SPORTS" | "ENTERTAINMENT" | "POLITICS";
 export type MarketStatus = "PENDING" | "ACTIVE" | "RESOLVING" | "RESOLVED" | "CANCELLED";
@@ -83,12 +87,14 @@ export async function listMarkets(params: ListMarketsParams = {}) {
 }
 
 export async function getMarket(id: string) {
-  const { data } = await apiClient.get<MarketDetail>(`/markets/${id}`);
+  const { data } = await apiClient.get<MarketDetail>(apiPath`/markets/${marketId(id)}`);
   return data;
 }
 
 export async function getMarketByOnChainId(onChainMarketId: string) {
-  const { data } = await apiClient.get<MarketDetail>(`/markets/on-chain/${onChainMarketId}`);
+  const { data } = await apiClient.get<MarketDetail>(
+    apiPath`/markets/on-chain/${assertValid(parseU64(onChainMarketId), "on-chain market id")}`,
+  );
   return data;
 }
 
@@ -102,8 +108,8 @@ export interface ResolutionStatus {
   dbStatus: MarketStatus;
 }
 
-export async function getResolution(marketId: string) {
-  const { data } = await apiClient.get<ResolutionStatus>(`/oracle/markets/${marketId}/resolution`);
+export async function getResolution(id: string) {
+  const { data } = await apiClient.get<ResolutionStatus>(apiPath`/oracle/markets/${marketId(id)}/resolution`);
   return data;
 }
 
@@ -162,7 +168,7 @@ export interface GenerationJob {
   hint?: string;
 }
 
-export async function getMarketGenerationStatus(jobId: string, options?: ApiRequestOptions) {
-  const { data } = await apiClient.get<GenerationJob>(`/markets/generation-status/${encodeURIComponent(jobId)}`, undefined, options);
+export async function getMarketGenerationStatus(id: string, options?: ApiRequestOptions) {
+  const { data } = await apiClient.get<GenerationJob>(apiPath`/markets/generation-status/${jobId(id)}`, undefined, options);
   return data;
 }

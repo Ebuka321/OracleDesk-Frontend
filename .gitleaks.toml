@@ -1,0 +1,20 @@
+# Secret scanning policy (issue #118). Extends the default gitleaks rules and
+# allowlists the public values this repository intentionally commits.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public chain addresses, trace hashes and documentation examples"
+paths = [
+  '''docs/''',
+  '''lib/stellar/generated/''',
+]
+
+regexes = [
+  # Stellar public keys (G…) and contract ids (C…) are public.
+  '''\b[GC][A-Z2-7]{55}\b''',
+  # 32-byte transaction and trace hashes.
+  '''\b[0-9a-fA-F]{64}\b''',
+  # Placeholder secrets in tests and fixtures.
+  '''(?:test|fake|dummy|example|placeholder)[-_]?(?:key|secret|token)''',
+]

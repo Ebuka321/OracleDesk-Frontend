@@ -116,7 +116,7 @@ function TxContent() {
               Retry Query
             </button>
             <a
-              href={explorerTx(hash!)}
+              href={explorerTx(hash!) ?? undefined}
               target="_blank"
               rel="noopener noreferrer"
               className="border border-outline px-5 py-2.5 rounded-xl font-label-caps text-label-caps font-bold hover:bg-surface-variant transition-all"
@@ -331,7 +331,7 @@ function TxContent() {
             </div>
 
             <a
-              href={explorerTx(hash!)}
+              href={explorerTx(hash!) ?? undefined}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-primary hover:underline font-label-caps text-label-caps font-bold text-xs"

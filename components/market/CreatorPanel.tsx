@@ -31,7 +31,7 @@ export function CreatorPanel({ view, seed }: { view: OnChainMarketView; seed?: L
         <p>Fees accrued: {formatUsdc(lp.feesAccrued)} USDC</p>
         <p className="text-xs text-on-surface-variant">Sent to the OracleDesk treasury, not to you. Fees are excluded from your pool claim.</p>
       </div>
-      {claimed ? <p role="status">Claimed. <a href={explorerAccount(view.market.creator)} target="_blank" rel="noopener noreferrer" className="underline">Account history</a></p> : <>
+      {claimed ? <p role="status">Claimed. <a href={explorerAccount(view.market.creator) ?? undefined} target="_blank" rel="noopener noreferrer" className="underline">Account history</a></p> : <>
         {lp.claimable !== null && <p>Claimable now: {formatUsdc(lp.claimable)} USDC</p>}
         {lp.claimable === 0n && <p className="text-xs text-on-surface-variant">0 USDC: claiming only marks the pool as settled.</p>}
         <button type="button" disabled={!lp.isFinal || claim.isPending} onClick={() => void onClaim()} className="rounded bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50">
@@ -41,7 +41,7 @@ export function CreatorPanel({ view, seed }: { view: OnChainMarketView; seed?: L
       </>}
       {claim.isPending && <p role="status">{claim.phase.name === "awaiting-signature" ? "Asking your wallet to sign…" : "Waiting for the network…"}</p>}
       {error && <p role="alert" className="text-error">{error}</p>}
-      {claim.data && <p role="status">Received {formatUsdc(claim.data.payout)} USDC. <a href={explorerTx(claim.data.txHash)} target="_blank" rel="noopener noreferrer" className="underline">View transaction</a></p>}
+      {claim.data && <p role="status">Received {formatUsdc(claim.data.payout)} USDC. <a href={explorerTx(claim.data.txHash) ?? undefined} target="_blank" rel="noopener noreferrer" className="underline">View transaction</a></p>}
       <p className="text-xs text-on-surface-variant">Seed shares are part of your ordinary position. Redeem those separately; this action only claims the pool remainder.</p>
     </section>
   );

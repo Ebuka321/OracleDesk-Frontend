@@ -81,7 +81,7 @@ export default function MarketTraceHistoryPage() {
             </p>
           </div>
           <Link
-            href={`/reasoning/verify?marketId=${marketId}&onChainMarketId=${marketId}`}
+            href={`/reasoning/verify?marketId=${encodeURIComponent(marketId)}&onChainMarketId=${encodeURIComponent(marketId)}`}
             className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg font-label-caps text-xs font-bold hover:bg-primary/90 transition-all shadow-sm shrink-0"
           >
             <Icon name="verified" className="text-sm" />

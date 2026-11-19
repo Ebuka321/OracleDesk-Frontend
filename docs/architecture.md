@@ -1,5 +1,29 @@
 # Frontend architecture
 
+## Self-hosted assets and origins
+
+Every asset is served from this origin. There are no third-party fonts or
+illustrations: `next/font/google` downloads and self-hosts Geist/Geist Mono/
+Inter at build time, icons come from `components/ui/icon.tsx`, and images live
+in `public/images/`. `next.config.ts` sets `images.remotePatterns: []`, so
+`next/image` refuses remote sources. `npm run check:origins` scans the build
+output after `npm run build` and fails on any origin outside the configured
+API, RPC, IPFS, x402 and explorer endpoints; reviewed non-fetch strings live
+in `scripts/external-origins.allow.json` with a reason. Wallet kit endpoints
+(WalletConnect, Albedo, Trezor) are contacted only after the user opens a
+wallet, and are listed there as such.
+
+## Untrusted input
+
+Identifiers are parsed before use with the strict parsers in
+`lib/validation/ids.ts` (UUID/slug, u64, 32-byte hash, CID, G-account,
+C-contract). API paths are built with `apiPath` in `lib/api/client.ts`, which
+encodes each segment and refuses traversal; the request layer also checks the
+final URL stays under `API_URL`. Socket payloads are validated by
+`lib/validation/events.ts` and invalid events are dropped. `explorerTx`,
+`explorerAccount` and `ipfsUrl` return `null` for invalid input, and external
+URLs from backend data pass `safeExternalUrl` before being rendered as links.
+
 ## Where data comes from
 
 The frontend has two sources that can disagree, and it says which one a value came from (the small `chain` / `backend` tags in the UI).
@@ -24,7 +48,7 @@ Backend routes using `requireAuth` or `optionalAuth` use `userKeys`, prefixed
 with `["scope", walletOrDash, sessionIdOrDash]`. Trace bodies and lists,
 allowances, payments, positions, portfolio and admin jobs follow this rule.
 Public markets and platform statistics keep `publicKeys` and survive sign-out.
-The session id is random per sign-in and stored beside the session; bearer
+The session id is random per sign-in and stored in `localStorage`; bearer
 tokens never appear in query keys.
 
 `UserScopeStore.resetUserScope` runs synchronously on wallet disconnect,
@@ -34,7 +58,30 @@ observers, and discards late results. Chain caches are also removed on account
 change, disconnect and token invalidation. Scoped API requests bind to the
 expected session before sending and after receiving, so an old response cannot
 clear or populate a new session. `TOKEN_EXPIRED`, `INVALID_TOKEN` and
-`UNAUTHORIZED` with a token clear the session and notify the provider.
+`UNAUTHORIZED` clear the session and notify the provider.
+
+### Session transport
+
+The backend sets the session as an `HttpOnly; Secure` cookie (`od_session`)
+plus a readable `od_csrf` cookie. `NEXT_PUBLIC_SESSION_MODE=cookie` (default)
+makes `lib/api/client.ts` send `credentials: "include"` and an
+`X-CSRF-Token` header on every non-GET request; no JWT is written to
+`localStorage`, `sessionStorage` or a JS-readable cookie. Only
+`oracledesk_wallet` remains, as a UI hint.
+
+`GET /auth/session` is the source of truth for which wallet the cookie belongs
+to; `WalletProvider` asks for it on mount and feeds the answer into the state
+machine (`SESSION_SYNCED`). Disconnect and wallet switches call
+`POST /auth/logout` before a new sign-in starts (`lib/api/auth.ts` serializes
+logout → sign-in, so a late logout cannot clear the new cookie).
+`POST /auth/verify` is sent with `X-Session-Mode: cookie`.
+
+One-shot migration: on first load in cookie mode, a legacy
+`oracledesk_token` is exchanged with `POST /auth/upgrade` and then deleted
+(success or 401). A network failure keeps it for the next load. Cross-site
+deployments where third-party cookies are blocked must use
+`NEXT_PUBLIC_SESSION_MODE=bearer`; a same-site API subdomain or a Next rewrite
+proxy keeps the cookie first-party.
 
 Copy-trade reads traces through `useTrace`; it never retains a trace in an
 independent component-state cache. Add new authenticated hooks through the same
@@ -218,11 +265,29 @@ Points bucket on a worker (`lib/charts/bucket.worker.ts`) into fixed widths per 
 
 ## Errors
 
-`lib/stellar/errors.ts` turns SDK, wallet and contract failures into plain sentences. Contract errors are named from the `Error(Contract, #N)` code through each binding's `Errors` table. Wallet rejection, insufficient USDC and a missing USDC trustline are matched first, because token errors raised inside `market_core.buy` carry the token contract's own codes, which overlap with market-core's.
+`lib/stellar/errors.ts` turns SDK, wallet and contract failures into plain sentences. It first recognises SDK error classes by `name` (`UserRejectedError`, `NoSignerError`, `ExpiredStateError`, `RestoreFailureError`, `ExternalServiceError`), then decodes submission result codes, then attributes contract errors from diagnostic events: the last event whose topic is `error` and whose `ScError` is `sceContract` names the contract id that failed. A SAC failure inside `market_core.buy` is therefore attributed to `CONTRACTS.usdc` and never run through market-core's error table, even when the numbers overlap. Text regexes remain as a fallback, covered by `lib/stellar/__tests__/fixtures/errors/` and fast-check fuzz tests.
+
+## Observability
+
+Three opt-in layers, all off unless configured (see `.env.example` and `docs/privacy.md`):
+
+- **Error reporting** (`NEXT_PUBLIC_ERROR_REPORTING_DSN`, issue #123): `lib/observability/report.ts` captures errors with reference ids, consent (default denied, DNT/GPC honoured), rate limiting and dedupe; `lib/observability/redact.ts` strips JWTs, seeds, XDR and addresses (salted HMAC) and drops any event where a token pattern survives the second pass. `app/error.tsx` / `app/global-error.tsx` render the recovery UI with the reference.
+- **Trace context** (issue #124): `lib/observability/tracing.ts` implements W3C `traceparent`. Every `lib/api/client.ts` request sends `traceparent` + `X-Request-Id`; multi-step flows run inside `withOperation` ("sign-in", "premium-unlock", "copy-trade", "generate-market") so all of a flow's requests share one trace id, and user-visible failures append `Reference: <first 8 hex>` (`formatErrorWithReference`). The sign-in verify request also carries `X-Challenge-Hash` (sha256 of the challenge XDR) so the backend can bind the signature to the issued challenge. `ApiError.requestId` keeps the id (backend's `x-request-id` when echoed) for reports.
+- **RPC spans** (same module, issue #124): with `NEXT_PUBLIC_OTEL_EXPORTER_URL` set, `initTracing()` patches `fetch` once to time Soroban RPC calls (method, duration, HTTP status) and exports batches over OTLP/HTTP JSON at `NEXT_PUBLIC_OTEL_SAMPLE_RATE` — dependency-free, no OpenTelemetry packages in the bundle. Span attributes are filtered for sensitive keys/values before buffering. `traceparent` is never sent to the RPC provider unless `NEXT_PUBLIC_OTEL_PROPAGATE_TO_RPC=1`. Backend-side propagation of these headers is a backend concern (out of scope for this repo).
+- **Funnel analytics** (issue #125): `lib/observability/analytics.ts` exposes a typed `track(event, props)` over the versioned catalog in `analytics-events.ts` (schema pinned by `analytics-schema.test.ts`). Nothing is sent unless `NEXT_PUBLIC_ANALYTICS_PROVIDER` is set **and** the user consents via `components/consent-banner.tsx` (DNT/GPC always deny, events are dropped rather than queued before consent), and a runtime guard drops any event whose properties look like an address, token or exact amount. Providers (`posthog` / `plausible` / `http`) live in `lib/observability/providers/` behind literal dynamic imports so unconfigured builds tree-shake them out. Funnel points: `WalletProvider` (modal/connect/sign-in/network), `useQuoteBuy` + the buy/sell/redeem mutations (submitted → wallet-prompted → completed), premium payment, and one `copy_trade_completed` per copy trade in `useCopyTrade`.
 
 ## Generated code
 
 `lib/stellar/generated/` is copied from the pinned `contracts` submodule by `scripts/sync-bindings.mjs`, with a do-not-edit header and `// @ts-nocheck`. CI fails if it's stale. `CATEGORY_TAGS` in `clients.ts` has a compile-time exhaustiveness check against the binding's `Category` type, so a contract enum change breaks the build rather than the UI.
+
+## Contract identities
+
+Every contract id the app can talk to is overridable with a `NEXT_PUBLIC_*` variable, so a forked or tampered build could silently route trades or payments elsewhere. Four pieces guard against that:
+
+- **Manifest.** Besides the raw `deployments.testnet.json`, the sync script generates `lib/stellar/generated/contract-manifest.ts`: network, contracts commit, a sha256 of the deployments file, and the canonical contract/account ids. `npm run check:bindings` fails when it is stale.
+- **Resolution.** `lib/stellar/config.ts` exports `IDENTITIES` (label, role, address, `source: "manifest" | "env"`, `matchesManifest` per key, including `paymentsRecipient`) and `BUILD_IDENTITY` (`{ canonical, overridden, manifestCommit }`). A build whose passphrase has no manifest (anything not testnet) is never canonical.
+- **Display.** `ContractIdentity` / `SigningIdentities` (`components/tx-review.tsx`) show the label, a role sentence, the full address in 4-character groups, a three-word fingerprint (`lib/stellar/fingerprint.ts`, first 33 bits of sha256(decoded StrKey payload) → three BIP-39 words, a UX aid against vanity addresses — see SECURITY.md), a source badge, and a Stellar Expert link. The premium payment dialog shows `paymentsRecipient` + `usdc` (with an "I checked these addresses" gate when overridden and a note when the recipient is the treasury); quick-view and copy-trade show `marketCore` + `usdc` before signing.
+- **Banner and build check.** `components/layout/BuildIdentityBanner.tsx` renders a persistent, non-dismissable banner on every page when `!BUILD_IDENTITY.canonical`, listing the overridden identities and every address. `next.config.ts` prints the same at build time, and `ORACLEDESK_REQUIRE_CANONICAL=1` (build-only env) fails the build instead.
 
 ## Rendering
 

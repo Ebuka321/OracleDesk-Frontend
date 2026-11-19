@@ -274,7 +274,7 @@ export default function PortfolioAnalytics() {
                           </td>
                           <td className="px-6 py-4 text-right">
                             <a
-                              href={explorerTx(entry.txHash)}
+                              href={explorerTx(entry.txHash) ?? undefined}
                               target="_blank"
                               rel="noreferrer"
                               className="text-primary font-data-mono text-xs hover:underline"

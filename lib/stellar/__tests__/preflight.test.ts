@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Market, Position } from "../generated/market-core";
 import { MAX_SETS } from "../generated/fpmm";
-import { FRIENDLY, describeError } from "../errors";
+import { describeError } from "../errors";
+import { messageFor } from "@/lib/errors/messages";
 import { preflightBuy, preflightRedeem, preflightSell, type PreflightInput } from "../preflight";
 
 const market = (overrides: Partial<Market> = {}): Market =>
@@ -136,10 +137,10 @@ describe("preflightRedeem", () => {
 
 it("shares friendly text with simulation errors", () => {
   for (const [number, code] of [[2, "Paused"], [9, "MarketClosed"], [15, "MarketTooLarge"], [16, "NothingToRedeem"]] as const) {
-    expect(describeError(`Error(Contract, #${number})`).message).toBe(FRIENDLY[code]);
+    expect(describeError(`Error(Contract, #${number})`).message).toBe(messageFor(`contract.marketCore.${code}`));
   }
   expect(preflightBuy(validTrade(), "Yes", 0n)).toMatchObject({
     ok: false,
-    failures: [{ code: "InvalidAmount", message: FRIENDLY.InvalidAmount }],
+    failures: [{ code: "InvalidAmount", message: messageFor("contract.marketCore.InvalidAmount") }],
   });
 });

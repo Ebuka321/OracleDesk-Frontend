@@ -228,7 +228,7 @@ function AdminAgentsContent() {
           {error && <p role="alert" className="text-sm text-error">{error}</p>}
           {txHash && (
             <p className="text-sm text-secondary">
-              Submitted. <a className="underline font-data-mono" href={explorerTx(txHash)} target="_blank" rel="noreferrer">View transaction</a>
+              Submitted. <a className="underline font-data-mono" href={explorerTx(txHash) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>
             </p>
           )}
 
@@ -246,7 +246,7 @@ function AdminAgentsContent() {
                 <div><dt className="text-on-surface-variant text-xs uppercase">Traces in window</dt><dd>{reviewRow?.tracesInWindow ?? 0}</dd></div>
               </dl>
               <p className="text-xs text-on-surface-variant">
-                <a className="underline" href={explorerAccount(review.agent)} target="_blank" rel="noreferrer">Open in Stellar Expert</a>
+                <a className="underline" href={explorerAccount(review.agent) ?? undefined} target="_blank" rel="noreferrer">Open in Stellar Expert</a>
               </p>
               {review.action === "unregister" && (
                 <div className="space-y-2 border-t border-outline-variant pt-3">
@@ -309,7 +309,7 @@ function AdminAgentsContent() {
                     return (
                       <tr key={row.address} className="align-top">
                         <td className="px-4 py-4">
-                          <a href={explorerAccount(row.address)} target="_blank" rel="noreferrer" className="font-data-mono text-xs break-all text-primary hover:underline">
+                          <a href={explorerAccount(row.address) ?? undefined} target="_blank" rel="noreferrer" className="font-data-mono text-xs break-all text-primary hover:underline">
                             {row.address}
                           </a>
                           {row.lastTraceId && (

@@ -41,20 +41,26 @@ export function read<Tx extends AssembledTransaction<any>>(
   tx: Tx,
   contract: ContractName = "marketCore",
 ): Unwrapped<TxValue<Tx>> {
-  const sim = tx.simulation as { error?: string } | undefined;
+  const sim = tx.simulation as { error?: string; events?: unknown[] } | undefined;
   let raw: unknown;
   try {
     raw = tx.result;
   } catch (err) {
-    throw new UserFacingError(describeError(`${sim?.error ?? ""} ${String(err)}`, contract), err);
+    throw new UserFacingError(
+      describeError(`${sim?.error ?? ""} ${String(err)}`, { contract, simulation: { error: sim?.error, events: sim?.events } }),
+      err,
+    );
   }
 
   if (raw instanceof Ok) {
     return raw.unwrap() as Unwrapped<TxValue<Tx>>;
   }
   if (raw instanceof Err) {
-    const errPayload = sim?.error ? `${sim.error} ${String(raw)}` : raw;
-    throw new UserFacingError(describeError(errPayload, contract), raw);
+    // Simulation events attribute SAC failures to the token contract, not the caller.
+    throw new UserFacingError(
+      describeError(raw, { contract, simulation: { error: sim?.error, events: sim?.events } }),
+      raw,
+    );
   }
 
   return raw as Unwrapped<TxValue<Tx>>;
@@ -92,7 +98,15 @@ export async function submit<Tx extends AssembledTransaction<any>>(
     };
   } catch (err) {
     if (err instanceof UserFacingError) throw err;
-    throw new UserFacingError(describeError(err, contract), err);
+    const boundary = err as { errorResult?: unknown; sendTransactionResponse?: { errorResult?: unknown; diagnosticEvents?: unknown[] } };
+    throw new UserFacingError(
+      describeError(err, {
+        contract,
+        errorResult: boundary.sendTransactionResponse?.errorResult ?? boundary.errorResult,
+        simulation: { events: boundary.sendTransactionResponse?.diagnosticEvents },
+      }),
+      err,
+    );
   }
 }
 

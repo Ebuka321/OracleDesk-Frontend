@@ -1,0 +1,16 @@
+{
+  "id": "wallet/ledger/no-signer",
+  "source": "wallet",
+  "capturedWith": {
+    "sdk": "16.3.1",
+    "kit": "2.5.0",
+    "wallet": "ledger"
+  },
+  "error": {
+    "name": "NoSignerError",
+    "message": "No signer available for this account."
+  },
+  "expect": {
+    "kind": "disconnected"
+  }
+}

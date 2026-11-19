@@ -1,0 +1,15 @@
+{
+  "id": "sdk/expired-state",
+  "source": "sdk",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "ExpiredStateError",
+    "message": "The transaction's footprint has expired."
+  },
+  "expect": {
+    "kind": "archived",
+    "code": "archived-entry"
+  }
+}

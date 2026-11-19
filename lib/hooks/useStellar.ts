@@ -5,43 +5,39 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNetworkMutation as useMutation } from "@/lib/query/useNetworkMutation";
 import { recheckRpcAfterSimulation } from "@/lib/stellar/rpc-network-guard";
 import { isWalletCreator, settlementOf } from "@/lib/stellar/lp";
+import type { ViewedAddress } from "@/lib/stellar/identity";
+import type { ContractKey } from "@/lib/stellar/contract-check";
 import { Keypair, scValToNative, TransactionBuilder, xdr } from "@stellar/stellar-sdk";
 import type { AssembledTransaction } from "@stellar/stellar-sdk/contract";
-import { useWalletAddress, useWalletNetwork, useWalletSigner } from "@/lib/contexts/WalletContext";
-import { currentRpcUrl, marketCore, reasoningRegistry, rpcPool, token, Outcomes, rpcServer, withPinnedRpc, type OutcomeTag, type Signer } from "@/lib/stellar/clients";
-import { createMarketBatcher } from "@/lib/stellar/market-batch";
+import { useWallet } from "@/lib/contexts/WalletContext";
+import { marketCore, reasoningRegistry, token, Outcomes, type OutcomeTag, type Signer } from "@/lib/stellar/clients";
+import { describeError, UserFacingError, type ContractName } from "@/lib/stellar/errors";
+import { priceYesBps } from "@/lib/stellar/generated/fpmm";
+import type { Market as OnChainMarket, Position } from "@/lib/stellar/generated/market-core";
+import { fetchAndVerifyTrace, type TraceCheck } from "@/lib/stellar/trace";
+import { planSell } from "@/lib/stellar/trade-plan";
+import { feeBreakdown, fetchBaseReserve, spendableXlm, type AccountReserve, type FeeBreakdown } from "@/lib/stellar/fees";
+import { maxIn, minOut } from "@/lib/stellar/units";
+import { CONTRACTS, NETWORK_LABEL, NETWORK_PASSPHRASE } from "@/lib/stellar/config";
 import { DEBUG_ENABLED } from "@/lib/diagnostics/flags";
 import { recordSimulation } from "@/lib/diagnostics/events";
-import { useUpdatePending } from "@/lib/pwa/update-context";
-import { describeError, describeSubmission, UserFacingError, type ContractName } from "@/lib/stellar/errors";
-import { BPS, priceYesBps } from "@/lib/stellar/generated/fpmm";
-import type { Config, Market as OnChainMarket, Position } from "@/lib/stellar/generated/market-core";
-import { fetchVerifiedTrace, type VerifiedTrace } from "@/lib/stellar/verified-trace";
-import { read, submit, bytesToHex, simulatedWithLedger, simulated } from "@/lib/stellar/typed-call";
-import { maxIn, minOut } from "@/lib/stellar/units";
-import {
-  feeBreakdown,
-  fetchBaseReserve,
-  spendableXlm,
-  type AccountReserve,
-  type FeeBreakdown,
-} from "@/lib/stellar/fees";
-import {
-  TxLifecycle,
-} from "@/lib/stellar/tx-lifecycle";
-import { useTxTracker } from "@/lib/stellar/tx-tracker";
-import { tradeInvalidationKeys } from "@/lib/stellar/tx-tracker-core";
-import { CONTRACTS, NETWORK_LABEL, NETWORK_PASSPHRASE } from "@/lib/stellar/config";
-
-import { preflightBuy, preflightRedeem, type Preflight, type PreflightFailure, type PreflightInput } from "@/lib/stellar/preflight";
-import { getSubmitQueue } from "@/lib/stellar/submit-queue";
+import { currentRpcUrl, rpcPool, rpcServer, withPinnedRpc } from "@/lib/stellar/clients";
+import { getTrustlineState, enableUsdcTrustline, usdcClassicAsset, type TrustlineState } from "@/lib/stellar/trustline";
+import { read, send, simulated } from "@/lib/stellar/tx";
+import { simulatedWithLedger, submit } from "@/lib/stellar/typed-call";
+import { createMarketBatcher } from "@/lib/stellar/market-batch";
+import type { Config } from "@/lib/stellar/generated/market-core";
+import { Stamped, reconcileRead } from "@/lib/stellar/optimistic";
+import type { Preflight, PreflightFailure, PreflightInput } from "@/lib/stellar/preflight";
+import { preflightBuy, preflightRedeem } from "@/lib/stellar/preflight";
 import { assertIntentMatches, describeAssembled, type ReviewModel } from "@/lib/stellar/tx-decode";
+import { describeSubmission } from "@/lib/stellar/errors";
+import { cancelTradeReads, confirmTrade } from "@/lib/stellar/optimistic-cache";
+import { getSubmitQueue } from "@/lib/stellar/submit-queue";
 import { discoverRedeemable, loadRedeemAllResume, saveRedeemAllResume, type ItemState, type RedeemAllResume, type RedeemDiscovery } from "@/lib/stellar/redeem-all";
-import { enableUsdcTrustline, getTrustlineState, usdcClassicAsset, type TrustlineState } from "@/lib/stellar/trustline";
+import { fetchVerifiedTrace, type VerifiedTrace } from "@/lib/stellar/verified-trace";
+import { solveSellForShares, reconcileWithQuote } from "@/lib/stellar/sell-solver";
 import { minCollateralForShares } from "@/lib/stellar/quote";
-import { reconcileWithQuote, solveSellForShares } from "@/lib/stellar/sell-solver";
-import { confirmTrade, cancelTradeReads } from "@/lib/stellar/optimistic-cache";
-import { reconcileRead, type Stamped } from "@/lib/stellar/optimistic";
 import {
   MULTISIG_DEFAULT_SLIPPAGE_BPS,
   MULTISIG_DEFAULT_TIMEOUT_S,
@@ -60,10 +56,11 @@ import {
   type AccountAuth,
   type MultisigSession,
 } from "@/lib/stellar/multisig";
-
-export { tradeInvalidationKeys };
-
-export { read, submit, simulated, bytesToHex };
+import { tradeInvalidationKeys } from "@/lib/stellar/tx-tracker-core";
+import { useTxTracker } from "@/lib/stellar/tx-tracker";
+import { useUpdatePending } from "@/lib/pwa/update-context";
+import { useWalletAddress, useWalletNetwork, useWalletSigner } from "@/lib/stellar/WalletProvider";
+import { TxLifecycle } from "@/lib/stellar/tx-lifecycle";
 
 /** Query keys all start with "stellar" so a disconnect can drop them in one go. */
 export const stellarKeys = {
@@ -510,14 +507,53 @@ export function useQuoteBuy(id: bigint | string | null | undefined, outcome: Out
   return useQuery({
     queryKey: stellarKeys.quoteBuy(String(id), outcome, collateralIn?.toString() ?? ""),
     enabled: id !== null && id !== undefined && collateralIn !== null && collateralIn > 0n,
-    queryFn: async () =>
-      read(
-        await measured("quote_buy", () =>
-          marketCore().quote_buy({ market_id: toId(id as string), outcome: Outcomes[outcome], collateral_in: collateralIn as bigint }),
-        ),
-      ),
+    queryFn: async ({ queryKey }) => {
+      // Issue #125: report the funnel on query-key changes only, never on
+      // background refetches of the same key, or the funnel inflates.
+      const key = JSON.stringify(queryKey);
+      const fresh = key !== lastQuoteKey;
+      if (fresh) {
+        lastQuoteKey = key;
+        track("quote_requested", { side: outcome, amount: bucketUsdc(collateralIn as bigint) });
+      }
+      try {
+        return read(
+          await measured("quote_buy", () =>
+            marketCore().quote_buy({ market_id: toId(id as string), outcome: Outcomes[outcome], collateral_in: collateralIn as bigint }),
+          ),
+        );
+      } catch (error) {
+        if (fresh) {
+          const described = describeError(error);
+          track("quote_failed", { kind: described.kind, code: described.code });
+        }
+        throw error;
+      }
+    },
     staleTime: 5_000,
   });
+}
+
+/** Last quote query key reported, so refetches of the same key stay silent. */
+let lastQuoteKey: string | null = null;
+
+/**
+ * Common `trade_completed` payload (issue #125): the outcome is the
+ * classified error kind (or "success"), the code is a public contract error
+ * name, and the duration is bucketed — never an exact timing or amount.
+ */
+function tradeResult(
+  action: AnalyticsEvents["trade_completed"]["action"],
+  error: unknown,
+  startedAt: number,
+): AnalyticsEvents["trade_completed"] {
+  const described = error ? describeError(error) : null;
+  return {
+    action,
+    outcome: (described ? described.kind : "success") as Outcome,
+    code: described?.code,
+    durationBucket: bucketDuration(startedAt ? Date.now() - startedAt : 0),
+  };
 }
 
 export function useExactBuyQuote(
@@ -737,8 +773,8 @@ function useTxRunner(contract: ContractName) {
   const { networkEpoch, assertNetworkCurrent } = useWalletNetwork();
   const [runner] = useState(() => new TxLifecycle<unknown>({ server: () => rpcServer(), contract }));
   const phase = useSyncExternalStore(runner.subscribe, runner.getSnapshot, runner.getSnapshot);
-  const start = useCallback(<T, R = T>(tx: AssembledTransaction<T>, parse: (v: xdr.ScVal | undefined) => R, onHash?: (hash: string) => void) => {
-    const run = runner.run(tx as AssembledTransaction<unknown>, parse, onHash, () => assertNetworkCurrent?.(networkEpoch)) as Promise<{ value: R; txHash: string; ledger: number }>;
+  const start = useCallback(<T, R = T>(tx: AssembledTransaction<T>, parse: (v: xdr.ScVal | undefined) => R, onHash?: (hash: string) => void, onPrompt?: () => void) => {
+    const run = runner.run(tx as AssembledTransaction<unknown>, parse, onHash, () => assertNetworkCurrent?.(networkEpoch), onPrompt) as Promise<{ value: R; txHash: string; ledger: number }>;
     if (!DEBUG_ENABLED) return run;
     const method = `submit:${String((tx as { options?: { method?: string } }).options?.method ?? "tx")}`;
     return run.then(
@@ -1050,14 +1086,29 @@ export function useBuy() {
   const invalidate = useInvalidateAfterTrade();
   const runner = useTxRunner("marketCore");
   const tracker = useTxTracker();
+  const submittedAt = useRef(0);
 
   const mutation = useMutation({
-    onMutate: async (v: BuyParams & { prepared?: PreparedBuy }) => cancelTradeReads(queryClient, String(v.marketId), guard().publicKey),
+    onMutate: async (v: BuyParams & { prepared?: PreparedBuy }) => {
+      addBreadcrumb("mutation", "buy started");
+      submittedAt.current = 0;
+      return cancelTradeReads(queryClient, String(v.marketId), guard().publicKey);
+    },
     onError: (error, v, context) => {
       const kind = describeError(error).kind;
+      // A cancelled signature is a user choice, not an error: breadcrumb only.
+      if (kind === "rejected") addBreadcrumb("wallet", "buy signature rejected");
+      else reportError(error, { feature: "buy", contract: "marketCore" });
       if (context && ["network", "unknown", "expired", "submission"].includes(kind)) invalidate(String(v.marketId), context.holder);
     },
     mutationFn: async (params: BuyParams & { prepared?: PreparedBuy }) => {
+      submittedAt.current = Date.now();
+      track("trade_submitted", {
+        action: "buy",
+        side: params.outcome,
+        amount: bucketUsdc(params.collateralIn),
+        slippageBps: coerceSlippage(params.slippageBps),
+      });
       const signer = guard();
       const { marketId, outcome, collateralIn } = params;
       return runQueuedWrite(signer, `Buy ${outcome} on #${marketId}`, dedupeValue("buy", marketId, outcome, collateralIn), guard, async () => {
@@ -1075,12 +1126,18 @@ export function useBuy() {
           tracker.track({ hash, kind: "buy", holder: signer.publicKey, marketId: String(marketId), outcome,
             amounts: { collateralIn: collateralIn.toString(), minSharesOut: minSharesOut.toString() }, networkPassphrase: NETWORK_PASSPHRASE });
         };
-        const { value, txHash, ledger } = await runner.start(prepared.tx, confirmedAmount, onHash);
+        const { value, txHash, ledger } = await runner.start(prepared.tx, confirmedAmount, onHash, () =>
+          track("trade_wallet_prompted", { action: "buy" }));
         return { sharesOut: value, quotedShares: quote, minSharesOut, txHash, ledger, collateralIn, holder: signer.publicKey };
       });
     },
+    onSettled: (_data, error) => {
+      track("trade_completed", tradeResult("buy", error, submittedAt.current));
+      submittedAt.current = 0;
+    },
     onSuccess: async (d, v) => {
       // Cancel again: a focus/refetch may have started while the wallet was signing.
+      addBreadcrumb("mutation", "buy confirmed");
       await cancelTradeReads(queryClient, String(v.marketId), d.holder);
       confirmTrade(queryClient, { ...v, ...d, kind: "buy", marketId: String(v.marketId) });
       for (const key of [stellarKeys.market(String(v.marketId)), ["stellar", "markets"], stellarKeys.account(d.holder)]) {
@@ -1110,153 +1167,73 @@ export function useSell() {
   const invalidate = useInvalidateAfterTrade();
   const runner = useTxRunner("marketCore");
   const tracker = useTxTracker();
+  const submittedAt = useRef(0);
 
   const mutation = useMutation({
-    onMutate: async (v: SellParams) => cancelTradeReads(queryClient, String(v.marketId), guard().publicKey),
+    onMutate: async (v: SellParams) => {
+      addBreadcrumb("mutation", "sell started");
+      submittedAt.current = 0;
+      return cancelTradeReads(queryClient, String(v.marketId), guard().publicKey);
+    },
     onError: (error, v, context) => {
       const kind = describeError(error).kind;
+      if (kind === "rejected") addBreadcrumb("wallet", "sell signature rejected");
+      else reportError(error, { feature: "sell", contract: "marketCore" });
       if (context && ["network", "unknown", "expired", "submission"].includes(kind)) invalidate(String(v.marketId), context.holder);
     },
     mutationFn: async (params: SellParams) => {
-      const { marketId, outcome, slippageBps } = params;
+      const { marketId, outcome, shares, slippageBps } = params;
       const signer = guard();
       return runQueuedWrite(signer, `Sell ${outcome} on #${marketId}`, dedupeValue("sell", marketId, outcome, params.shares), guard, async () => {
       await requireUsdcTrustline(signer.publicKey);
       const id = toId(marketId);
-      let { market } = await fetchOnChainMarketBySimulation(id);
-      const position = simulated(
-        await marketCore().get_position({ market_id: id, holder: signer.publicKey }),
-      );
-      const heldShares = outcome === "Yes" ? position.yes : position.no;
-      const shares = params.mode === "all" ? heldShares : params.shares;
-      if (shares <= 0n) {
-        throw new UserFacingError({ kind: "contract", code: "InvalidAmount", message: "Enter a share amount greater than zero." });
-      }
-      if (shares > heldShares) {
-        throw new UserFacingError({ kind: "contract", code: "InsufficientShares", message: "You don't have enough shares for this sale." });
-      }
-      const [rSold, rOther] = outcome === "Yes" ? [market.reserve_yes, market.reserve_no] : [market.reserve_no, market.reserve_yes];
-      const feeBps = BigInt(market.fee_bps);
-      let local = solveSellForShares(rSold, rOther, shares, feeBps);
-      if ("error" in local) {
-        throw new UserFacingError({
-          kind: "contract",
-          code: local.error === "too-small" ? "InvalidAmount" : "InsufficientLiquidity",
-          message: local.error === "too-small"
-            ? "That's too few shares to sell after fees."
-            : "There isn't enough liquidity to sell that many shares.",
-        });
-      }
-
-      const quoteAt = async (collateralOut: bigint) =>
-        simulated(
-          await marketCore().quote_sell({ market_id: id, outcome: Outcomes[outcome], collateral_out: collateralOut }),
-        );
-      let confirmed = await reconcileWithQuote(local, quoteAt);
-      if (confirmed.sharesIn !== local.sharesIn) {
-        market = (await fetchOnChainMarketBySimulation(id)).market;
-        const [freshSold, freshOther] =
-          outcome === "Yes" ? [market.reserve_yes, market.reserve_no] : [market.reserve_no, market.reserve_yes];
-        const refreshed = solveSellForShares(freshSold, freshOther, shares, BigInt(market.fee_bps));
-        if ("error" in refreshed) {
-          throw new UserFacingError({
-            kind: "contract",
-            code: refreshed.error === "too-small" ? "InvalidAmount" : "InsufficientLiquidity",
-            message: refreshed.error === "too-small"
-              ? "That's too few shares to sell after fees."
-              : "There isn't enough liquidity to sell that many shares.",
-          });
-        }
-        local = refreshed;
-        confirmed = await reconcileWithQuote(local, quoteAt);
-        if (confirmed.sharesIn !== local.sharesIn) {
-          const maxOut = ((freshOther - 1n) * (BPS - BigInt(market.fee_bps))) / BPS;
-          let low = 0n;
-          let high = maxOut + 1n;
-          let lowQuote = 0n;
-          let probes = 0;
-          let pivot = confirmed.collateralOut;
-          let pivotQuote = confirmed.sharesIn;
-          if (pivotQuote <= shares) {
-            low = pivot;
-            lowQuote = pivotQuote;
-          } else {
-            high = pivot;
-          }
-
-          let step = 1n;
-          while ((low === 0n || high === maxOut + 1n) && probes < 4) {
-            probes++;
-            if (low === 0n) {
-              pivot = high > maxOut ? maxOut : high;
-              const candidate = pivot > step ? pivot - step : 1n;
-              pivotQuote = await quoteAt(candidate);
-              if (pivotQuote <= shares) {
-                low = candidate;
-                lowQuote = pivotQuote;
-              } else high = candidate;
-            } else {
-              const candidate = low + step;
-              if (candidate > maxOut) break;
-              pivotQuote = await quoteAt(candidate);
-              if (pivotQuote > shares) high = candidate;
-              else {
-                low = candidate;
-                lowQuote = pivotQuote;
-              }
-            }
-            step *= 2n;
-          }
-          while (high - low > 1n && probes < 8) {
-            probes++;
-            const mid = (low + high) / 2n;
-            const midQuote = await quoteAt(mid);
-            if (midQuote <= shares) {
-              low = mid;
-              lowQuote = midQuote;
-            } else high = mid;
-          }
-          if (low === 0n || high - low > 1n) {
-            throw new UserFacingError({
-              kind: "network",
-              message: "The market changed while preparing your sale. Refresh the quote and try again.",
-            });
-          }
-          confirmed = { collateralOut: low, sharesIn: lowQuote, dust: shares - lowQuote, iterations: probes };
-        }
-      }
-
-      if (confirmed.sharesIn > shares) {
-        throw new UserFacingError({ kind: "contract", code: "InsufficientShares", message: "You don't have enough shares for this sale." });
-      }
-      const maxSharesIn = [maxIn(confirmed.sharesIn, slippageBps), heldShares].reduce((a, b) => a < b ? a : b);
-      const initial = await prepareSell(signer, { marketId, outcome, collateralOut: confirmed.collateralOut, maxSharesIn });
-      const { prepared } = await reviewPreparedWrite(initial, params.review, () => prepareSell(signer, { marketId, outcome, collateralOut: confirmed.collateralOut, maxSharesIn }));
-      const tx = prepared.tx;
-
-      const onHash = (hash: string) => {
-        tracker.track({
-          hash,
-          kind: "sell",
-          holder: signer.publicKey,
-          marketId: String(marketId),
+      const { market } = await fetchOnChainMarket(id);
+      let plan: { collateralOut: bigint; maxSharesIn: bigint };
+      try {
+        plan = planSell(
+          {
+            reserveYes: market.reserve_yes,
+            reserveNo: market.reserve_no,
+            feeBps: BigInt(market.fee_bps),
+          },
           outcome,
-          amounts: { shares: shares.toString(), maxSharesIn: maxSharesIn.toString() },
-          networkPassphrase: NETWORK_PASSPHRASE,
-        });
-      };
-
-      const { value, txHash, ledger } = await runner.start(tx, confirmedAmount, onHash);
-      return { sharesSold: value, collateralOut: confirmed.collateralOut, maxSharesIn, txHash, ledger, holder: signer.publicKey };
+          shares,
+          slippageBps
+        );
+      } catch {
+        throw new UserFacingError({ kind: "contract", message: "There isn't enough liquidity to sell that many shares." });
+      }
+      const tx = await marketCore(signer).sell({
+        trader: signer.publicKey,
+        market_id: id,
+        outcome: Outcomes[outcome],
+        collateral_out: plan.collateralOut,
+        max_shares_in: plan.maxSharesIn,
+      });
+      const { value, txHash, ledger } = await send(tx);
+      return { sharesSold: value, collateralOut: plan.collateralOut, maxSharesIn: plan.maxSharesIn, txHash, ledger, holder: signer.publicKey };
       });
     },
     onSuccess: async (d, v) => {
       // Cancel again: a focus/refetch may have started while the wallet was signing.
       await cancelTradeReads(queryClient, String(v.marketId), d.holder);
-      confirmTrade(queryClient, { ...v, ...d, kind: "sell", marketId: String(v.marketId) });
+      confirmTrade(queryClient, {
+        kind: "sell",
+        marketId: String(v.marketId),
+        holder: d.holder,
+        ledger: d.ledger ?? null,
+        txHash: d.txHash,
+        outcome: v.outcome,
+        sharesSold: d.sharesSold,
+        collateralOut: d.collateralOut,
+      });
       for (const key of [stellarKeys.market(String(v.marketId)), ["stellar", "markets"], stellarKeys.account(d.holder)]) {
         void queryClient.invalidateQueries({ queryKey: key });
       }
+    },
+    onSettled: (_data, error) => {
+      track("trade_completed", tradeResult("sell", error, submittedAt.current));
+      submittedAt.current = 0;
     },
   });
 
@@ -1272,14 +1249,22 @@ export function useRedeem() {
   const invalidate = useInvalidateAfterTrade();
   const runner = useTxRunner("marketCore");
   const tracker = useTxTracker();
+  const submittedAt = useRef(0);
 
   const mutation = useMutation({
-    onMutate: async (v: { marketId: bigint | string }) => cancelTradeReads(queryClient, String(v.marketId), guard().publicKey),
+    onMutate: async (v: { marketId: bigint | string }) => {
+      submittedAt.current = 0;
+      return cancelTradeReads(queryClient, String(v.marketId), guard().publicKey);
+    },
     onError: (error, v, context) => {
       const kind = describeError(error).kind;
+      if (kind === "rejected") addBreadcrumb("wallet", "redeem signature rejected");
+      else reportError(error, { feature: "redeem", contract: "marketCore" });
       if (context && ["network", "unknown", "expired", "submission"].includes(kind)) invalidate(String(v.marketId), context.holder);
     },
     mutationFn: async ({ marketId, review }: { marketId: bigint | string; review?: PreparedWriteReview }) => {
+      submittedAt.current = Date.now();
+      track("trade_submitted", { action: "redeem" });
       const signer = guard();
       return runQueuedWrite(signer, `Redeem #${marketId}`, dedupeValue("redeem", marketId), guard, async () => {
       await requireUsdcTrustline(signer.publicKey);
@@ -1299,7 +1284,8 @@ export function useRedeem() {
         });
       };
 
-      const { value, txHash, ledger } = await runner.start(tx, confirmedAmount, onHash);
+      const { value, txHash, ledger } = await runner.start(tx, confirmedAmount, onHash, () =>
+        track("trade_wallet_prompted", { action: "redeem" }));
       return { payout: value, txHash, ledger, holder: signer.publicKey };
       });
     },
@@ -1310,6 +1296,10 @@ export function useRedeem() {
       for (const key of [stellarKeys.market(String(v.marketId)), ["stellar", "markets"], stellarKeys.account(d.holder)]) {
         void queryClient.invalidateQueries({ queryKey: key });
       }
+    },
+    onSettled: (_data, error) => {
+      track("trade_completed", tradeResult("redeem", error, submittedAt.current));
+      submittedAt.current = 0;
     },
   });
 
@@ -1596,6 +1586,11 @@ export function useUsdcTransfer() {
     }),
     onSuccess: (d) => {
       queryClient.invalidateQueries({ queryKey: stellarKeys.balance(d.holder) });
+    },
+    onError: (error) => {
+      const kind = describeError(error).kind;
+      if (kind === "rejected") addBreadcrumb("wallet", "transfer signature rejected");
+      else reportError(error, { feature: "premium" });
     },
   });
 

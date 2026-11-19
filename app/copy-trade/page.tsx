@@ -1,7 +1,7 @@
 "use client";
 import { Icon } from "@/components/ui/icon";
 
-import { TxReview, TxReviewPreferenceControl, shouldSkipTxReview } from "@/components/tx-review";
+import { SigningIdentities, TxReview, TxReviewPreferenceControl, shouldSkipTxReview } from "@/components/tx-review";
 import type { ReviewModel } from "@/lib/stellar/tx-decode";
 import { useSubmitQueueState } from "@/lib/stellar/submit-queue";
 
@@ -11,12 +11,15 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useWalletActions, useWalletAddress, useWalletNetwork } from "@/lib/contexts/WalletContext";
 import { DevProfiler } from "@/lib/dev/profiler";
 import { useTrace } from "@/lib/hooks/useTraces";
+import { useViewedAddress } from "@/lib/hooks/useViewedAddress";
 import { useCopyTrade } from "@/lib/hooks/useCopyTrade";
 import { PendingCopyTrades } from "@/components/copy-trade/PendingCopyTrades";
 import { ApiError } from "@/lib/api/client";
+import { userMessage } from "@/lib/errors/display";
 import { useMarket } from "@/lib/hooks/useMarkets";
 import { useQuoteBuy, useUsdcBalance, useAccountReserve, usePrepareBuy, useOnChainMarket, fetchOnChainMarketBySimulation, useUsdcTrustline, useEnableUsdc, useUsdcBalanceState, type PreparedWriteReview } from "@/lib/hooks/useStellar";
 import { explorerTx, NETWORK_LABEL } from "@/lib/stellar/config";
+import { parseRecordId } from "@/lib/validation/ids";
 import { formatUsdc, formatXlm, minOut, bpsToPercent, probabilityToBps, tryParseUsdc, BPS } from "@/lib/stellar/units";
 import { chooseCollateral, maxCollateralForEdge, quoteCopy, type CopyMarket, type CopyQuote, type SizingMode } from "@/lib/stellar/quote";
 import type { OutcomeTag } from "@/lib/stellar/clients";
@@ -92,7 +95,7 @@ function renderTxPhase(phase: TxPhase): string | null {
     case "confirmed":
       return "Transaction confirmed.";
     case "failed":
-      return phase.error.message;
+      return userMessage(phase.error);
     case "expired":
       return "Transaction expired without confirmation.";
   }
@@ -114,12 +117,16 @@ function CopyTradeContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const traceId = searchParams.get("traceId");
-  const marketIdParam = searchParams.get("marketId");
+  const rawTraceId = searchParams.get("traceId");
+  const traceId = parseRecordId(rawTraceId);
+  const marketIdParam = parseRecordId(searchParams.get("marketId"));
+  const invalidTraceLink = Boolean(rawTraceId) && !traceId;
 
   const traceQuery = useTrace(traceId ?? undefined);
   const trace = traceQuery.data ?? null;
-  const traceError = traceQuery.isError ? "We couldn't load this reasoning trace." : null;
+  const traceError = invalidTraceLink
+    ? "This link has an invalid trace id."
+    : traceQuery.isError ? "We couldn't load this reasoning trace." : null;
   const { data: market } = useMarket(marketIdParam ?? trace?.marketId ?? undefined);
   const onChainMarketId = market?.onChainMarketId ?? null;
   const onChainMarket = useOnChainMarket(onChainMarketId);
@@ -360,13 +367,10 @@ function CopyTradeContent() {
         `You received ${formatUsdc(result.sharesOut, { maxDecimals: 2 })} ${side.toUpperCase()} shares.` +
           (result.txHash ? ` Transaction ${result.txHash.slice(0, 10)}…` : ""),
       );
-      if (result.txHash) window.open(explorerTx(result.txHash), "_blank", "noopener,noreferrer");
+      const explorerUrl = result.txHash ? explorerTx(result.txHash) : null;
+      if (explorerUrl) window.open(explorerUrl, "_blank", "noopener,noreferrer");
     } catch (error) {
-      if (error instanceof ApiError && error.code === "TRACE_LOCKED") {
-        setStatusMessage("Unlock this trace before copying it.");
-      } else {
-        setStatusMessage(error instanceof Error ? error.message : "The trade didn't go through. Please try again.");
-      }
+      setStatusMessage(userMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -378,28 +382,12 @@ function CopyTradeContent() {
       await enableUsdc.mutateAsync();
       setStatusMessage("USDC is enabled. Click Confirm Copy Trade when you're ready.");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Couldn't enable USDC.");
+      setStatusMessage(userMessage(error));
     }
   };
 
   return (
     <div className="bg-background text-on-surface min-h-screen flex flex-col">
-      <style jsx global>{`
-        .ai-shimmer {
-          background: linear-gradient(
-            90deg,
-            rgba(145, 215, 238, 0.1) 0%,
-            rgba(145, 215, 238, 0.2) 50%,
-            rgba(145, 215, 238, 0.1) 100%
-          );
-          background-size: 200% 100%;
-          animation: shimmer 3s infinite linear;
-        }
-        @keyframes shimmer {
-          0% { background-position: 200% 0; }
-          100% { background-position: -200% 0; }
-        }
-      `}</style>
 
       <main className="flex-grow flex items-center justify-center p-4 sm:p-margin relative">
         <LiveRegion message={statusMessage ?? ""} />
@@ -645,7 +633,7 @@ function CopyTradeContent() {
                   ) : quote.isFetching ? (
                     <span className="text-on-surface-variant">Quoting…</span>
                   ) : quote.error ? (
-                    <span className="text-error">{quote.error.message}</span>
+                    <span className="text-error">{userMessage(quote.error)}</span>
                   ) : (
                     <span className="text-on-surface-variant">—</span>
                   )}
@@ -715,7 +703,7 @@ function CopyTradeContent() {
                   <span>{renderTxPhase(buy.phase) ?? statusMessage ?? "Processing copy trade…"}</span>
                   {"hash" in buy.phase && buy.phase.hash && (
                     <a
-                      href={explorerTx(buy.phase.hash)}
+                      href={explorerTx(buy.phase.hash) ?? undefined}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-primary hover:underline font-data-mono text-xs"
@@ -733,6 +721,7 @@ function CopyTradeContent() {
                   {waitingForBuy ? "Waiting for your previous transaction to finish…" : statusMessage}
                 </div>
               )}
+              <SigningIdentities keys={["marketCore", "usdc"]} compact />
               <div className="flex gap-3">
                 <button
                   className="flex-1 border border-outline text-on-surface py-4 rounded-lg font-headline-sm text-headline-sm hover:bg-surface-variant transition-all"

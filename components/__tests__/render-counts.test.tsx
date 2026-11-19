@@ -10,6 +10,17 @@ import React, { useEffect } from "react";
  * the contract calls, which have their own tests.
  */
 
+vi.mock("@/lib/hooks/useViewedAddress", () => ({
+  useViewedAddress: () => ({
+    viewed: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7",
+    source: "connected",
+    isWatching: false,
+    watchError: null,
+    setWatch: () => true,
+    clearWatch: () => {},
+  }),
+}));
+
 vi.mock("@/lib/hooks/useStellar", () => ({
   useAccountAuth: () => ({ data: undefined, isLoading: false }),
   useAccountReserve: () => ({

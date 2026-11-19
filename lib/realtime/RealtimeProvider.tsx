@@ -5,7 +5,8 @@ import { MotionConfig } from "framer-motion";
 import { io } from "socket.io-client";
 import { API_URL } from "@/lib/api/client";
 import { createBatcher, type Batch } from "./batch";
-import { isTradeEvent, isTraceEvent, type RealtimeEvent } from "./types";
+import type { RealtimeEvent } from "./types";
+import { parseReasoningPublished, parseTradeExecuted } from "@/lib/validation/events";
 
 type Listener = (batch: Batch<RealtimeEvent>) => void;
 const Context = createContext<Set<Listener> | null>(null);
@@ -33,8 +34,16 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     socket.on("disconnect", onDisconnect);
     socket.on("connect_error", onConnectError);
     socket.io.on("reconnect_attempt", onReconnectAttempt);
-    socket.on("TRADE_EXECUTED", (payload: unknown) => { if (isTradeEvent(payload)) batcher.push({ type: "TRADE_EXECUTED", payload, receivedAt: Date.now() }); });
-    socket.on("REASONING_PUBLISHED", (payload: unknown) => { if (isTraceEvent(payload)) batcher.push({ type: "REASONING_PUBLISHED", payload, receivedAt: Date.now() }); });
+    socket.on("TRADE_EXECUTED", (payload: unknown) => {
+      const event = parseTradeExecuted(payload);
+      if (event) batcher.push({ type: "TRADE_EXECUTED", payload: event, receivedAt: Date.now() });
+      else console.debug("[realtime] dropped invalid TRADE_EXECUTED payload");
+    });
+    socket.on("REASONING_PUBLISHED", (payload: unknown) => {
+      const event = parseReasoningPublished(payload);
+      if (event) batcher.push({ type: "REASONING_PUBLISHED", payload: event, receivedAt: Date.now() });
+      else console.debug("[realtime] dropped invalid REASONING_PUBLISHED payload");
+    });
     return () => { socket.disconnect(); stop(); batcher.dispose(); document.removeEventListener("visibilitychange", visibility); };
   }, [listeners]);
   return <Context.Provider value={listeners}><StatusContext.Provider value={status}><MotionConfig reducedMotion="user">{children}</MotionConfig></StatusContext.Provider></Context.Provider>;

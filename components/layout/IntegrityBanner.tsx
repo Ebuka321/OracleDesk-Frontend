@@ -44,7 +44,7 @@ export function IntegrityBanner() {
                   <li key={f.contract} className="flex flex-wrap items-center gap-1.5 text-on-surface">
                     <span className="font-mono font-medium text-destructive">{f.contract}:</span>
                     <a
-                      href={explorerAccount(f.id)}
+                      href={explorerAccount(f.id) ?? undefined}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="font-mono text-primary hover:underline inline-flex items-center gap-0.5"

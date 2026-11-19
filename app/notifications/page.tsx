@@ -57,9 +57,9 @@ export default function NotificationsPage() {
           <div className="flex flex-wrap justify-between gap-2"><h2 className="font-bold text-sm">{title[item.kind]}{item.readAt === null && <span className="text-primary text-xs ml-2">Unread</span>}</h2><time dateTime={new Date(item.createdAt).toISOString()} className="text-xs text-on-surface-variant">{new Date(item.createdAt).toLocaleString()}</time></div>
           <p className="text-sm mt-2">{message(item)}</p>
           <div className="flex flex-wrap gap-4 mt-3 text-xs text-primary">
-            {item.marketId && <Link className="underline" href={`/markets/quick-view?onChainId=${item.marketId}`}>View market #{item.marketId}</Link>}
+            {item.marketId && <Link className="underline" href={`/markets/quick-view?onChainId=${encodeURIComponent(item.marketId)}`}>View market #{item.marketId}</Link>}
             {item.kind === "trace" && item.data.traceId && <Link className="underline" href={`/reasoning/detail?traceId=${encodeURIComponent(item.data.traceId)}`}>Read reasoning</Link>}
-            {item.txHash && <a className="underline" href={explorerTx(item.txHash)} target="_blank" rel="noreferrer">View transaction</a>}
+            {item.txHash && <a className="underline" href={explorerTx(item.txHash) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>}
             {item.readAt === null && <button type="button" onClick={() => void inbox.markRead([item.id])} className="underline">Mark read</button>}
           </div>
         </article>)}

@@ -1,6 +1,11 @@
 import type { UserScope } from "@/lib/query/scope";
+import { API_URL } from "@/lib/stellar/config";
+import { API_ERROR_CODES, type ApiCode, type ApiErrorCode } from "@/lib/errors/codes";
+import { messageFor } from "@/lib/errors/messages";
 
-export interface ApiRequestOptions { expectScope?: UserScope; signal?: AbortSignal }
+export { API_URL };
+
+export interface ApiRequestOptions { expectScope?: UserScope; signal?: AbortSignal; trace?: TraceCtx }
 const sessionListeners = new Set<() => void>();
 const authInvalidListeners = new Set<() => void>();
 export function onAuthSessionChanged(listener: () => void) {
@@ -19,19 +24,57 @@ export interface ApiErrorPayload {
 }
 
 export class ApiError extends Error {
-  code: string;
-  status: number;
-  details?: unknown;
+  readonly code: string;
+  readonly status: number;
+  readonly details?: unknown;
   /** Seconds from the response's `Retry-After` header (429 / 409), when the backend sent one. */
-  retryAfterSeconds?: number;
+  readonly retryAfterSeconds?: number;
+  readonly errorCode: ApiCode;
+  readonly serverMessage: string;
 
-  constructor(error: ApiErrorPayload, status: number, retryAfterSeconds?: number) {
-    super(error.message);
+  constructor(
+    errorOrStatus: ApiErrorPayload | number,
+    statusOrCode?: number | string,
+    retryAfterOrMessage?: number | string,
+    detailsArg?: unknown,
+  ) {
+    let payloadCode: string;
+    let payloadMessage: string;
+    let payloadStatus: number;
+    let payloadDetails: unknown;
+    let retryAfterSeconds: number | undefined;
+
+    if (typeof errorOrStatus === "number") {
+      payloadStatus = errorOrStatus;
+      payloadCode = String(statusOrCode);
+      payloadMessage = String(retryAfterOrMessage ?? payloadCode);
+      payloadDetails = detailsArg;
+    } else {
+      payloadCode = errorOrStatus.code;
+      payloadMessage = errorOrStatus.message;
+      payloadDetails = errorOrStatus.details;
+      payloadStatus = Number(statusOrCode ?? 0);
+      retryAfterSeconds = typeof retryAfterOrMessage === "number" ? retryAfterOrMessage : undefined;
+    }
+
+    const isKnown = (API_ERROR_CODES as readonly string[]).includes(payloadCode);
+    const errorCode: ApiCode = isKnown ? `api.${payloadCode as ApiErrorCode}` : "api.HTTP_UNKNOWN";
+    const params: Record<string, string | number> =
+      typeof payloadDetails === "object" && payloadDetails
+        ? { ...(payloadDetails as Record<string, string | number>) }
+        : {};
+    if (retryAfterSeconds !== undefined && params.seconds === undefined) {
+      params.seconds = retryAfterSeconds;
+    }
+    const userMsg = messageFor(errorCode, params);
+    super(userMsg);
     this.name = "ApiError";
-    this.code = error.code;
-    this.status = status;
-    this.details = error.details;
+    this.code = payloadCode;
+    this.status = payloadStatus;
+    this.details = payloadDetails;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.errorCode = errorCode;
+    this.serverMessage = payloadMessage;
   }
 }
 
@@ -57,18 +100,103 @@ export interface ApiResponse<T> {
   meta?: unknown;
 }
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://oracledesk-backend.onrender.com/api/v1";
+/**
+ * How the backend session is carried. `cookie` is the default: the backend
+ * sets an HttpOnly cookie and this client sends `credentials: "include"` plus
+ * a CSRF header. `bearer` keeps the legacy localStorage token and is kept for
+ * cross-site deployments where third-party cookies are unavailable.
+ */
+export type SessionMode = "cookie" | "bearer";
+const configuredSessionMode = process.env.NEXT_PUBLIC_SESSION_MODE;
+export const SESSION_MODE: SessionMode =
+  configuredSessionMode === "bearer" ? "bearer"
+    : configuredSessionMode === "cookie" ? "cookie"
+      : process.env.NODE_ENV === "test" ? "bearer"
+        : "cookie";
+
 const TOKEN_KEY = "oracledesk_token";
 const USER_ID_KEY = "oracledesk_user_id";
 const WALLET_KEY = "oracledesk_wallet";
 const SESSION_KEY = "oracledesk_session_id";
+const CSRF_COOKIE = "od_csrf";
+
+/** CSRF token for cookie mode, kept in memory and re-read from the cookie on load. */
+let csrfToken: string | null = null;
+/** Wallet the backend confirmed the cookie belongs to. Never written from UI state alone. */
+let confirmedSessionWallet: string | null = null;
+
+export function setCsrfToken(token: string | null): void {
+  csrfToken = token;
+}
+
+export function readCsrfCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.split(/;\s*/).find((part) => part.startsWith(`${CSRF_COOKIE}=`));
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match.slice(CSRF_COOKIE.length + 1));
+  } catch {
+    return null;
+  }
+}
+
+export function getCsrfToken(): string | null {
+  return csrfToken ?? readCsrfCookie();
+}
+
+/** Records the wallet a `GET /auth/session` (or a fresh verify) confirmed. */
+export function setConfirmedSessionWallet(wallet: string | null): void {
+  confirmedSessionWallet = wallet;
+  sessionListeners.forEach((listener) => listener());
+}
 
 function getBrowserStorage() {
   try { return typeof window === "undefined" ? null : window.localStorage; } catch { return null; }
 }
 
+const INVALID_SEGMENT = /[\/\\\x00-\x1f]/;
+
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+/**
+ * Builds an API path with encoded, validated segments (issue #120). A segment
+ * that is empty, `.`/`..`, contains a slash (raw or encoded) or non-ASCII is
+ * refused instead of being normalised into a different endpoint.
+ */
+export function apiPath(strings: TemplateStringsArray, ...segments: Array<string | number | bigint>): string {
+  let path = strings[0] ?? "";
+  segments.forEach((raw, index) => {
+    const value = String(raw);
+    const decoded = decodeSegment(value);
+    if (
+      value.length === 0 ||
+      value.length > 256 ||
+      decoded === "." ||
+      decoded === ".." ||
+      INVALID_SEGMENT.test(decoded) ||
+      /[^\x20-\x7e]/.test(decoded)
+    ) {
+      throw new ApiError({ code: "INVALID_PATH", message: "The request path is invalid." }, 0);
+    }
+    path += encodeURIComponent(value) + (strings[index + 1] ?? "");
+  });
+  return path;
+}
+
 function buildUrl(path: string, params?: QueryParams) {
-  const url = new URL(path.replace(/^\//, ""), `${API_URL.replace(/\/$/, "")}/`);
+  const baseUrl = `${API_URL.replace(/\/$/, "")}/`;
+  const url = new URL(path.replace(/^\//, ""), baseUrl);
+  const base = new URL(baseUrl);
+  const basePath = base.pathname.replace(/\/$/, "");
+  if (url.origin !== base.origin || !(url.pathname === basePath || url.pathname.startsWith(`${basePath}/`))) {
+    throw new ApiError({ code: "INVALID_PATH", message: "The request path is invalid." }, 0);
+  }
 
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
@@ -82,11 +210,13 @@ function buildUrl(path: string, params?: QueryParams) {
 }
 
 export function getStoredToken() {
+  if (SESSION_MODE === "cookie") return null;
   return getBrowserStorage()?.getItem(TOKEN_KEY) ?? null;
 }
 
 export function getStoredSessionId() {
-  if (!getStoredToken()) return null;
+  if (SESSION_MODE === "bearer" && !getStoredToken()) return null;
+  if (SESSION_MODE === "cookie" && !confirmedSessionWallet) return null;
   const storage = getBrowserStorage();
   // Upgrade sessions saved before scope ids existed without putting JWTs in keys.
   let id = storage?.getItem(SESSION_KEY) ?? null;
@@ -97,17 +227,31 @@ export function getStoredSessionId() {
   return id;
 }
 
-export function storeAuthSession(session: { token: string; userId: string; walletAddress: string }) {
+export function storeAuthSession(session: {
+  token?: string;
+  userId: string;
+  walletAddress: string;
+  csrfToken?: string;
+}) {
   const storage = getBrowserStorage();
-  storage?.setItem(TOKEN_KEY, session.token);
-  storage?.setItem(USER_ID_KEY, session.userId);
+  // The wallet address is a UI hint in cookie mode, never proof of a session.
   storage?.setItem(WALLET_KEY, session.walletAddress);
-  storage?.setItem(SESSION_KEY, crypto.randomUUID());
+  if (!storage?.getItem(SESSION_KEY)) {
+    try { storage?.setItem(SESSION_KEY, crypto.randomUUID()); } catch { /* private mode */ }
+  }
+  if (SESSION_MODE === "cookie") {
+    confirmedSessionWallet = session.walletAddress;
+    if (session.csrfToken) setCsrfToken(session.csrfToken);
+  } else {
+    storage?.setItem(TOKEN_KEY, session.token ?? "");
+    storage?.setItem(USER_ID_KEY, session.userId);
+  }
   sessionListeners.forEach((listener) => listener());
 }
 
-/** Wallet address the stored session belongs to, if any. */
+/** Wallet address the backend session belongs to, if any. */
 export function getStoredSessionWallet() {
+  if (SESSION_MODE === "cookie") return confirmedSessionWallet;
   const storage = getBrowserStorage();
   return storage?.getItem(TOKEN_KEY) ? storage.getItem(WALLET_KEY) : null;
 }
@@ -118,6 +262,8 @@ export function clearAuthSession() {
   storage?.removeItem(USER_ID_KEY);
   storage?.removeItem(WALLET_KEY);
   storage?.removeItem(SESSION_KEY);
+  confirmedSessionWallet = null;
+  csrfToken = null;
   sessionListeners.forEach((listener) => listener());
 }
 
@@ -140,6 +286,13 @@ async function request<T>(
   const requestSessionId = getStoredSessionId();
   const headers = new Headers(init.headers);
 
+  // Issue #124: correlate this request with the active operation (or a fresh
+  // trace) so backend logs and client reports share one reference id.
+  const trace = options.trace ?? currentTrace() ?? newTrace();
+  const requestId = trace.traceId.slice(0, 8);
+  if (!headers.has("traceparent")) headers.set("traceparent", toTraceparent(trace));
+  if (!headers.has("X-Request-Id")) headers.set("X-Request-Id", requestId);
+
   if (!headers.has("Content-Type") && init.body) {
     headers.set("Content-Type", "application/json");
   }
@@ -148,10 +301,17 @@ async function request<T>(
     headers.set("Authorization", `Bearer ${token}`);
   }
 
+  const method = (init.method ?? "GET").toUpperCase();
+  if (SESSION_MODE === "cookie" && method !== "GET" && method !== "HEAD") {
+    const csrf = getCsrfToken();
+    if (csrf) headers.set("X-CSRF-Token", csrf);
+  }
+
   let response: Response;
   try {
     response = await fetch(buildUrl(path, params), {
       ...init,
+      credentials: SESSION_MODE === "cookie" ? "include" : "same-origin",
       signal: options.signal ?? init.signal,
       headers,
     });
@@ -161,9 +321,11 @@ async function request<T>(
       throw new ApiError(
         {
           code: "BACKEND_UNREACHABLE",
-          message: `Could not connect to the API server. Please ensure the backend is running at ${API_URL}`,
+          message: "Could not connect to the API server.",
         },
-        0
+        0,
+        undefined,
+        requestId,
       );
     }
     throw error;
@@ -175,10 +337,17 @@ async function request<T>(
   assertScope();
 
   if (!response.ok || envelope?.ok === false) {
-    if (token && token === getStoredToken() && requestSessionId === getStoredSessionId() && ["TOKEN_EXPIRED", "INVALID_TOKEN", "UNAUTHORIZED"].includes(apiError?.code ?? "")) {
+    const authFailure = ["TOKEN_EXPIRED", "INVALID_TOKEN", "UNAUTHORIZED"].includes(apiError?.code ?? "") ||
+      (response.status === 401 && !apiError);
+    const sessionIsCurrent = requestSessionId === getStoredSessionId();
+    const tokenIsCurrent = SESSION_MODE === "cookie" || (token && token === getStoredToken());
+    if (authFailure && sessionIsCurrent && tokenIsCurrent) {
       clearAuthSession();
       authInvalidListeners.forEach((listener) => listener());
     }
+
+    // Prefer the backend's own id when it echoes one (issue #124).
+    const serverRequestId = response.headers.get("x-request-id") ?? undefined;
 
     throw new ApiError(
       apiError ?? {
@@ -187,6 +356,7 @@ async function request<T>(
       },
       response.status,
       parseRetryAfter(response.headers.get("Retry-After")),
+      serverRequestId ?? requestId,
     );
   }
 

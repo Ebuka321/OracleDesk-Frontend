@@ -16,6 +16,7 @@ import { NETWORK_LABEL } from "@/lib/stellar/config";
 import { VirtualList } from "@/components/ui/virtual-list";
 import { QuestionVerificationBadge } from "@/components/question-verification-badge";
 import { bytesToHex } from "@/lib/stellar/typed-call";
+import { userMessage } from "@/lib/errors/display";
 
 const SourceTag = ({ source }: { source: "chain" | "backend" }) => (
   <span
@@ -319,7 +320,7 @@ function OnChainOnlyMarkets({ knownIds }: { knownIds: Set<string> }) {
         {orphans.map((v) => (
           <MarketCard
             key={v.id}
-            href={`/markets/quick-view?onChainId=${v.id}&from=markets`}
+            href={`/markets/quick-view?onChainId=${encodeURIComponent(v.id)}&from=markets`}
             category={v.market.category.tag}
             onChainMarketId={v.id}
             expiry={new Date(Number(v.market.close_time) * 1000).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).toUpperCase()}
@@ -398,7 +399,7 @@ export default function MarketsPageClient() {
             <Icon name="error" className="text-error text-4xl mb-4" />
             <p className="text-on-surface-variant font-medium">Failed to load markets.</p>
             <p className="text-on-surface-variant/70 text-sm mt-2">
-              {error instanceof Error ? error.message : "Please check if the backend is running and accessible."}
+              {userMessage(error)}
             </p>
             {typeof navigator !== "undefined" && navigator.onLine === false && (
               <p className="text-on-surface-variant text-sm mt-2">You appear to be offline. Reconnect, then retry.</p>
@@ -439,7 +440,7 @@ export default function MarketsPageClient() {
                 return (
                   <div {...a11y}>
                     <MarketCard 
-                      href={`/markets/quick-view?marketId=${m.id}&from=markets`}
+                      href={`/markets/quick-view?marketId=${encodeURIComponent(m.id)}&from=markets`}
                       category={m.category}
                       onChainMarketId={m.onChainMarketId}
                       reasoningTraces={m.reasoningTraces}

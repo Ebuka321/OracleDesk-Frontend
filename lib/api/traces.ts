@@ -1,5 +1,8 @@
-import { apiClient, type ApiRequestOptions } from "./client";
+import { apiClient, apiPath, type ApiRequestOptions } from "./client";
+import { assertValid, parseSlugId, parseUuid } from "@/lib/validation/ids";
 import type { MarketCategory, PaginationMeta, SettlementCurrency } from "./markets";
+
+const traceId = (id: string) => assertValid(parseUuid(id) ?? parseSlugId(id), "trace id");
 
 export type AgentType = "MARKET_MAKER" | "TRADER";
 export type UnlockType = "PER_TRACE" | "DAILY_PASS";
@@ -182,7 +185,7 @@ export async function listTraces(params: ListTracesParams = {}, options?: ApiReq
 }
 
 export async function getTrace(id: string, options?: ApiRequestOptions) {
-  const { data } = await apiClient.get<ReasoningTrace>(`/traces/${id}`, undefined, options);
+  const { data } = await apiClient.get<ReasoningTrace>(apiPath`/traces/${traceId(id)}`, undefined, options);
   return data;
 }
 
@@ -202,11 +205,11 @@ export const DAILY_PASS_TRACE_PLACEHOLDER = "00000000-0000-0000-0000-00000000000
  * the backend the transaction hash; it verifies the transfer on-chain.
  * Per-trace unlocks go through the x402 service instead.
  */
-export async function unlockDailyPass(traceId: string, txHash: string, amountRaw: string, options?: ApiRequestOptions) {
+export async function unlockDailyPass(id: string, txHash: string, amountRaw: string, options?: ApiRequestOptions) {
   const { data } = await apiClient.post<{
     subscription: unknown;
     trace: ReasoningTrace | null;
-  }>(`/traces/${traceId}/unlock`, { txHash, amountRaw, type: "DAILY_PASS" satisfies UnlockType }, undefined, options);
+  }>(apiPath`/traces/${traceId(id)}/unlock`, { txHash, amountRaw, type: "DAILY_PASS" satisfies UnlockType }, undefined, options);
 
   return data;
 }

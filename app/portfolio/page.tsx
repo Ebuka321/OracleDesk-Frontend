@@ -14,8 +14,9 @@ import {
   ratioBps,
 } from "@/lib/format/money";
 import { useTreasuryValuation } from "@/lib/portfolio/useValuation";
-import { formatUsdc } from "@/lib/stellar/units";
+import { formatUsdc, shortAddress } from "@/lib/stellar/units";
 import { NETWORK_LABEL } from "@/lib/stellar/config";
+import deployments from "@/lib/stellar/generated/deployments.testnet.json";
 import { useWallet } from "@/lib/contexts/WalletContext";
 import { useRedeemAll, type PreparedWriteReview } from "@/lib/hooks/useStellar";
 import { shouldSkipTxReview, TxReview, TxReviewPreferenceControl } from "@/components/tx-review";
@@ -24,6 +25,7 @@ import { TreasuryRiskLimits } from "@/components/treasury-risk-limits";
 import { VirtualTableBody } from "@/components/ui/virtual-list";
 import { ExportHistoryDialog } from "@/components/portfolio/export-history-dialog";
 import { PendingCopyTrades } from "@/components/copy-trade/PendingCopyTrades";
+import { SourceTag } from "@/components/ui/source-tag";
 
 const TerminalLog = () => {
   const [logs, setLogs] = useState([

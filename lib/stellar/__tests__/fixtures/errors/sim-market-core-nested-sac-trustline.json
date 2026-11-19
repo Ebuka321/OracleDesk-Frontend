@@ -1,0 +1,22 @@
+{
+  "id": "sim/market-core/nested-sac-trustline",
+  "source": "simulation",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "Error",
+    "message": "HostError: Error(Contract, #12)"
+  },
+  "events": [
+    {
+      "contract": "usdc",
+      "code": 13
+    }
+  ],
+  "expect": {
+    "kind": "no-trustline",
+    "code": "USDCNoTrustline",
+    "contract": "usdc"
+  }
+}

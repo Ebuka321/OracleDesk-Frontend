@@ -55,7 +55,7 @@ export function ViewingBanner() {
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <a
-            href={explorerAccount(viewed)}
+            href={explorerAccount(viewed) ?? undefined}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 font-mono text-primary hover:underline"

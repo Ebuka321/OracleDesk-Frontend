@@ -1,4 +1,5 @@
-import { apiClient, type ApiRequestOptions } from "./client";
+import { apiClient, apiPath, type ApiRequestOptions } from "./client";
+import { assertValid, parseTxHash, parseUuid } from "@/lib/validation/ids";
 
 /** What the wallet must sign to copy a trace: market_core.buy. */
 export interface CopyTradePayload {
@@ -40,8 +41,10 @@ export async function initiateCopyTrade(params: InitiateCopyTradeParams, options
 }
 
 export async function confirmCopyTrade(id: string, txHash: string, options?: ApiRequestOptions) {
-  const { data } = await apiClient.patch<CopyTradeRecord>(`/trade/copy/${id}/confirm`, {
-    txHash,
+  const copyTradeId = assertValid(parseUuid(id), "copy trade id");
+  const hash = assertValid(parseTxHash(txHash), "transaction hash");
+  const { data } = await apiClient.patch<CopyTradeRecord>(apiPath`/trade/copy/${copyTradeId}/confirm`, {
+    txHash: hash,
   }, options);
 
   return data;

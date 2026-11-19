@@ -214,7 +214,7 @@ const Hero = () => {
                   </div>
                 </div>
                 <Link
-                  href={`/markets/quick-view?marketId=${market.id}`}
+                  href={`/markets/quick-view?marketId=${encodeURIComponent(market.id)}`}
                   className="w-full border border-primary text-primary py-3 rounded font-label-caps text-label-caps tracking-widest hover:bg-primary/5 transition-colors text-center"
                 >
                   VIEW LIVE MARKET
@@ -263,7 +263,7 @@ const MarketCard = ({ id, icon, category, platform, change, title, prob, volume,
         </div>
         <span className={`font-data-mono text-[12px] ${change.startsWith('+') ? 'text-secondary' : change.startsWith('-') ? 'text-tertiary' : 'text-on-surface-variant'}`}>{change}</span>
       </div>
-      <Link href={id ? `/markets/quick-view?marketId=${id}` : "/markets"} className="block">
+      <Link href={id ? `/markets/quick-view?marketId=${encodeURIComponent(id)}` : "/markets"} className="block">
         <h3 className="font-headline-sm mb-4 group-hover:text-primary transition-colors">{title}</h3>
       </Link>
       <div className="flex items-center gap-4 mb-6">
@@ -277,7 +277,7 @@ const MarketCard = ({ id, icon, category, platform, change, title, prob, volume,
       <div className="flex justify-between items-center">
         <div className="text-label-caps text-on-surface-variant">Vol: {volume}</div>
         <Link 
-          href={id ? `/markets/quick-view?marketId=${id}` : "/markets"} 
+          href={id ? `/markets/quick-view?marketId=${encodeURIComponent(id)}` : "/markets"}
           className="bg-primary text-primary-foreground px-4 py-2 rounded font-label-caps text-[10px] uppercase group-hover:bg-primary-container"
         >
           Trade Now

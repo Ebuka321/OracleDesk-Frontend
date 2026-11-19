@@ -1,0 +1,16 @@
+{
+  "id": "sim/market-core/invalid-amount",
+  "source": "simulation",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "Error",
+    "message": "HostError: Error(Contract, #4)"
+  },
+  "expect": {
+    "kind": "contract",
+    "code": "InvalidAmount",
+    "contract": "marketCore"
+  }
+}

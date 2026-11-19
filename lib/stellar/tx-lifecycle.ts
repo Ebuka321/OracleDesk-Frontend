@@ -132,6 +132,8 @@ export class TxLifecycle<T> {
     parse: (v: xdr.ScVal | undefined) => T,
     onHash?: (hash: string) => void,
     beforeSubmit?: () => void | Promise<void>,
+    /** Called immediately before the wallet prompt opens (analytics, issue #125). */
+    onPrompt?: () => void,
   ): Promise<{ value: T; txHash: string; ledger: number }> {
     // 1. Simulating
     this.setPhase({ name: "simulating" });
@@ -148,6 +150,7 @@ export class TxLifecycle<T> {
     // 2. Awaiting signature
     this.setPhase({ name: "awaiting-signature" });
     try {
+      onPrompt?.();
       await tx.sign();
       await beforeSubmit?.();
     } catch (err) {

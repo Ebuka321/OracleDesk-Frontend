@@ -7,5 +7,5 @@ export function PendingValue({ state, fallback = null }: { state: Stamped<unknow
   if (!pending) return fallback;
   const label = state?.awaitingRpc ? "awaiting RPC" : "pending confirmation";
   return <span className="ml-2 text-xs text-on-surface-variant" role="status">{pending.txHash
-    ? <a className="underline" href={explorerTx(pending.txHash)} target="_blank" rel="noreferrer">{label}</a> : label}</span>;
+    ? <a className="underline" href={explorerTx(pending.txHash) ?? undefined} target="_blank" rel="noreferrer">{label}</a> : label}</span>;
 }

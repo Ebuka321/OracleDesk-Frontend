@@ -210,7 +210,7 @@ export default function WalletsPage() {
             <h3 className="font-headline-sm text-headline-sm text-on-surface flex items-center gap-2">Transaction History <DemoBadge /></h3>
             {address && (
               <a
-                href={explorerAccount(address)}
+                href={explorerAccount(address) ?? undefined}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-primary hover:underline font-label-caps text-[11px] inline-flex items-center gap-1"

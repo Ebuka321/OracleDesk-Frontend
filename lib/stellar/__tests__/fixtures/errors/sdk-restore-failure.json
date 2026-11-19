@@ -1,0 +1,15 @@
+{
+  "id": "sdk/restore-failure",
+  "source": "sdk",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "RestoreFailureError",
+    "message": "Restoration failed"
+  },
+  "expect": {
+    "kind": "archived",
+    "code": "archived-entry"
+  }
+}

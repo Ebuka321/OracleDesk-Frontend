@@ -6,28 +6,43 @@ on:
   pull_request:
     branches: [main, develop]
 
+permissions:
+  contents: read
+
 jobs:
   frontend:
     name: Typecheck, lint, test, build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: true
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
           cache: npm
 
       - run: npm ci --legacy-peer-deps
 
+      - name: Install the reviewed lifecycle scripts only
+        run: node scripts/run-allowed-install-scripts.mjs
+
+      - name: Registry signatures and provenance attestations
+        run: npm audit signatures
+
       - name: Generated bindings match the contracts submodule
         run: npm run check:bindings
 
+      - name: .env.example matches the variables the code reads
+        run: npm run check:env
+
       - name: Single SDK copy and major alignment guard
         run: npm run check:sdk
+
+      - name: Backend API error codes match documentation
+        run: npm run check:api-errors
 
       - name: Report contract interface changes
         run: node scripts/spec-diff.mjs --base "origin/${{ github.base_ref || 'main' }}" --summary "$GITHUB_STEP_SUMMARY"
@@ -36,19 +51,60 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+        env:
+          # Production builds require an explicit API URL (no remote fallback).
+          NEXT_PUBLIC_API_URL: https://oracledesk-backend.onrender.com/api/v1
+
+      - name: No unknown third-party origins in the build
+        run: npm run check:origins
+        env:
+          NEXT_PUBLIC_API_URL: https://oracledesk-backend.onrender.com/api/v1
+
+      - name: No secrets in the build output
+        run: npm run scan:secrets
+
+      - name: Gitleaks (pull requests)
+        if: github.event_name == 'pull_request'
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: No production links to retired demo routes
         run: node scripts/check-demo-links.mjs
+
+  secrets-canary:
+    name: Secret scanner canary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - name: Build with a synthetic secret seed and prove the scan fails
+        env:
+          NEXT_PUBLIC_API_URL: https://oracledesk-backend.onrender.com/api/v1
+        run: |
+          mkdir -p app/__scan_canary__
+          node -e "const {Keypair}=require('@stellar/stellar-sdk'); const fs=require('fs'); fs.writeFileSync('.canary-seed', Keypair.random().secret()); fs.writeFileSync('app/__scan_canary__/page.tsx', 'export default function Page(){return <p>{process.env.NEXT_PUBLIC_SCAN_CANARY}</p>}\\n')"
+          NEXT_PUBLIC_SCAN_CANARY="$(cat .canary-seed)" npm run build
+          if NEXT_PUBLIC_SCAN_CANARY="$(cat .canary-seed)" node scripts/scan-build-secrets.mjs --allow-name NEXT_PUBLIC_SCAN_CANARY; then
+            echo "::error::Secret scanner did not detect the canary"
+            exit 1
+          fi
 
   perf:
     name: Lighthouse CI & Performance Budgets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -65,7 +121,7 @@ jobs:
         run: npm run perf:lhci
 
       - name: Upload Lighthouse reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: lighthouse-reports

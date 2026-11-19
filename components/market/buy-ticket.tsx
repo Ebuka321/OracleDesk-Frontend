@@ -38,6 +38,7 @@ import { isMultisigAccount, MULTISIG_DEFAULT_SLIPPAGE_BPS, type MultisigSession 
 import type { ReviewModel } from "@/lib/stellar/tx-decode";
 import type { TxPhase } from "@/lib/stellar/tx-lifecycle";
 import { bpsToPercent, formatUsdc, formatXlm, maxIn, minOut, tryParseUsdc } from "@/lib/stellar/units";
+import { userMessage } from "@/lib/errors/display";
 
 /** A chain read older than this must be refreshed before a trade is signed. */
 const MARKET_STALE_AFTER_SEC = 60;
@@ -81,7 +82,7 @@ function renderTxPhase(phase: TxPhase): string | null {
     case "confirmed":
       return "Transaction confirmed.";
     case "failed":
-      return phase.error.message;
+      return userMessage(phase.error);
     case "expired":
       return "Transaction expired without confirmation.";
   }
@@ -273,7 +274,7 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
     } catch (err) {
       setBuyResult({
         kind: "error",
-        message: err instanceof Error ? err.message : "The trade didn't go through.",
+        message: userMessage(err),
       });
     }
   };
@@ -289,7 +290,7 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
     } catch (err) {
       setBuyResult({
         kind: "error",
-        message: err instanceof Error ? err.message : "Couldn't enable USDC.",
+        message: userMessage(err),
       });
     }
   };
@@ -384,12 +385,12 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
             : buyMode === "shares" && exactQuote.data
               ? `Costs ≈ ${formatUsdc(exactQuote.data.collateralIn, { maxDecimals: 2 })} USDC (fee ${formatUsdc(exactQuote.data.fee, { maxDecimals: 2 })}), at most ${formatUsdc(maxIn(exactQuote.data.collateralIn, slippageBps), { maxDecimals: 2 })} with ${bpsToPercent(slippageBps)} slippage`
               : buyMode === "shares" && exactQuote.error
-                ? exactQuote.error.message
+                ? userMessage(exactQuote.error)
                 : buyMode === "shares" && exactQuote.isFetching
                   ? "Quoting exact share amount…"
                   : quote.data !== undefined
               ? `≈ ${formatUsdc(quote.data, { maxDecimals: 2 })} shares, at least ${formatUsdc(minOut(quote.data, slippageBps), { maxDecimals: 2 })} (${bpsToPercent(slippageBps)} slippage)`
-              : quote.error ? quote.error.message : quote.isFetching ? "Quoting…" : ""}
+              : quote.error ? userMessage(quote.error) : quote.isFetching ? "Quoting…" : ""}
         </span>
         {balance.data !== undefined && <span>Balance {formatUsdc(balance.data, { maxDecimals: 2, grouping: true })}<PendingValue state={balanceState.data} /></span>}
       </div>
@@ -465,7 +466,7 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
           <span>{renderTxPhase(buy.phase) ?? "Processing transaction…"}</span>
           {"hash" in buy.phase && buy.phase.hash && (
             <a
-              href={explorerTx(buy.phase.hash)}
+              href={explorerTx(buy.phase.hash) ?? undefined}
               target="_blank"
               rel="noopener noreferrer"
               className="text-primary hover:underline font-data-mono"
@@ -488,7 +489,7 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
           {buyResult.kind === "success" && buyResult.txHash && (
             <div>
               <a
-                href={explorerTx(buyResult.txHash)}
+                href={explorerTx(buyResult.txHash) ?? undefined}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-primary hover:underline font-data-mono inline-block"

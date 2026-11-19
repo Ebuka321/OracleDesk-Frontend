@@ -1,0 +1,19 @@
+{
+  "id": "sim/treasury/trade-cap",
+  "source": "simulation",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "Error",
+    "message": "HostError: Error(Contract, #5)"
+  },
+  "context": {
+    "contract": "treasury"
+  },
+  "expect": {
+    "kind": "contract",
+    "code": "TradeCapExceeded",
+    "contract": "treasury"
+  }
+}

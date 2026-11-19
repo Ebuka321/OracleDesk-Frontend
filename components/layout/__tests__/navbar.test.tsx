@@ -24,6 +24,17 @@ vi.mock("@/lib/contexts/WalletContext", () => ({
   useWalletActions: () => ({ openModal: vi.fn(), disconnect: vi.fn() }),
 }));
 
+vi.mock("@/lib/hooks/useViewedAddress", () => ({
+  useViewedAddress: () => ({
+    viewed: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7",
+    source: "connected",
+    isWatching: false,
+    watchError: null,
+    setWatch: () => true,
+    clearWatch: () => {},
+  }),
+}));
+
 vi.mock("@/lib/hooks/useStellar", () => ({
   useAccountReserve: () => ({ data: { funded: true, balance: 100000000n, spendable: 90000000n }, isLoading: false }),
   useEnableUsdc: () => ({ mutateAsync: vi.fn(), isPending: false }),

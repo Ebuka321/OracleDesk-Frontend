@@ -11,6 +11,8 @@ import { isTerminalStatus } from "@/lib/hooks/generation-status";
 import { ApiError } from "@/lib/api/client";
 import { UserFacingError } from "@/lib/stellar/errors";
 import { isAdminAddress } from "@/lib/stellar/config";
+import { reportError } from "@/lib/observability/report";
+import { shortRef, withOperation } from "@/lib/observability/tracing";
 import { DEFAULTS, serializeDiscovery } from "@/lib/markets/discovery-params";
 import { runsInLastHour, saveJob, useAdminJobs, type StoredJob } from "@/lib/admin/job-store";
 import { completedWithoutChain, elapsedFor, formatElapsed, jobFeed, shortJobId, type JobEventTone } from "@/lib/admin/job-events";
@@ -78,16 +80,20 @@ function AdminCreateContent() {
     if (!address || starting.current) return;
     starting.current = true;
     setStartError(null);
-    try {
-      const idempotencyKey = crypto.randomUUID();
-      // Signs in to the backend only now, right before the protected call.
-      const result = await withSession(() => generateMarket.mutateAsync({ idempotencyKey }), "start a market-maker run");
-      saveJob(address, { jobId: result.jobId, lastStatus: "RUNNING", lastSeenAt: Date.now(), startedAt: new Date().toISOString() });
-    } catch (err) {
-      setStartError(describeStartError(err));
-    } finally {
-      starting.current = false;
-    }
+    // Issue #124: one trace across sign-in + generate so support can grep it.
+    await withOperation("generate-market", async (opCtx) => {
+      try {
+        const idempotencyKey = crypto.randomUUID();
+        // Signs in to the backend only now, right before the protected call.
+        const result = await withSession(() => generateMarket.mutateAsync({ idempotencyKey }), "start a market-maker run");
+        saveJob(address, { jobId: result.jobId, lastStatus: "RUNNING", lastSeenAt: Date.now(), startedAt: new Date().toISOString() });
+      } catch (err) {
+        reportError(err, { feature: "admin" });
+        setStartError(`${describeStartError(err)} Reference: ${shortRef(opCtx.traceId)}`);
+      } finally {
+        starting.current = false;
+      }
+    });
   };
 
   // UI gate only; the backend enforces admin rights on /markets/generate.

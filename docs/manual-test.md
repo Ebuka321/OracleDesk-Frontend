@@ -55,6 +55,7 @@ stellar contract invoke --id CA2WQQJ4OHQCLHQW6XN4BCLILGRV6V4YDYDT3GVIWXB53BTOO7E
 - [ ] No login signature appears until you do something that needs OracleDesk's server (copy trade, daily pass, admin). Then Freighter asks you to sign a transaction for OracleDesk login. It is never submitted; it proves you own the key. Approve it, and a sentence explains why it appears.
 - [ ] Sub-step: start the connect from `/copy-trade?traceId=…` with a non-default slider value. After approving, the URL and the slider value are unchanged.
 - [ ] Expected: no error under the button. In DevTools → Application → Local Storage, `oracledesk_wallet` equals your address once you have signed in.
+- [ ] In DevTools → Application → Cookies, `od_session` is HttpOnly and `od_csrf` is present. Local Storage has no `oracledesk_token`. Reload: you stay signed in.
 
 ## 5a. Mobile wallet (WalletConnect)
 

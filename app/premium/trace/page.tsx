@@ -8,8 +8,8 @@ import { useWallet } from "@/lib/contexts/WalletContext";
 import { usePaymentEvents, useTrace, useUnlockTrace } from "@/lib/hooks/useTraces";
 import { useAccountReserve, usePrepareUsdcTransfer, useUsdcTransfer } from "@/lib/hooks/useStellar";
 import type { PaymentEvent, TraceAccessLevel } from "@/lib/api/traces";
-import { PAYMENTS_RECIPIENT, X402_URL, explorerTx, NETWORK_LABEL } from "@/lib/stellar/config";
-import { formatUsdc, formatXlm, parseUsdc } from "@/lib/stellar/units";
+import { DAILY_PASS_PRICE_RAW, PAYMENTS_RECIPIENT, X402_URL, explorerTx, NETWORK_LABEL } from "@/lib/stellar/config";
+import { formatUsdc, formatXlm } from "@/lib/stellar/units";
 import type { TxPhase } from "@/lib/stellar/tx-lifecycle";
 import type { ReviewModel } from "@/lib/stellar/tx-decode";
 import { TxReview, TxReviewPreferenceControl, shouldSkipTxReview } from "@/components/tx-review";
@@ -25,7 +25,6 @@ import {
  * one. The backend verifies the transfer against its own DAILY_PASS_PRICE_RAW
  * and rejects anything lower, so this must not be lower either.
  */
-const DAILY_PASS_PRICE_RAW = parseUsdc(process.env.NEXT_PUBLIC_DAILY_PASS_PRICE_USDC || "0.5");
 
 function renderTxPhase(phase: TxPhase): string | null {
   switch (phase.name) {
@@ -68,7 +67,7 @@ function ReceiptRow({ event }: { event: PaymentEvent }) {
       </div>
       {event.txHash ? (
         <a
-          href={explorerTx(event.txHash)}
+          href={explorerTx(event.txHash) ?? undefined}
           target="_blank"
           rel="noopener noreferrer"
           className="font-data-mono text-[11px] text-primary hover:underline shrink-0"
@@ -369,7 +368,7 @@ function UnlockPremiumTraceContent() {
                   <span>{renderTxPhase(transfer.phase) ?? "Processing payment…"}</span>
                   {"hash" in transfer.phase && transfer.phase.hash && (
                     <a
-                      href={explorerTx(transfer.phase.hash)}
+                      href={explorerTx(transfer.phase.hash) ?? undefined}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="underline font-data-mono"

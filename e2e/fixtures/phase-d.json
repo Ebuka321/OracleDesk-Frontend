@@ -1,0 +1,36 @@
+{
+  "meta": {
+    "contractsCommit": "eb5f3fdaf00a39dabd7e7d41eb84e6d2c1940551",
+    "network": "testnet",
+    "rpcUrl": "https://soroban-testnet.stellar.org",
+    "recordedAt": "2026-11-19T00:00:00.000Z",
+    "sdkVersion": "16.3.1",
+    "deployments": {
+      "marketCore": "CBB7J3QWXRZ4W6K2Z3J3QWXRZ4W6K2Z3J3QWXRZ4W6K2Z3J3QWXRZ4W6",
+      "treasury": "CDUMMYTREASURY11111111111111111111111111111111111111111111",
+      "resolver": "CDUMMYRESOLVER11111111111111111111111111111111111111111111",
+      "reasoningRegistry": "CDUMMYREASONING11111111111111111111111111111111111111111111",
+      "usdc": "CDUMMYUSDC1111111111111111111111111111111111111111111111111"
+    }
+  },
+  "rpcCalls": [],
+  "httpCalls": [
+    {
+      "method": "GET",
+      "path": "/markets?status=RESOLVED&onChain=true",
+      "status": 200,
+      "body": {
+        "ok": true,
+        "data": [
+          {
+            "id": "e2e-market-1",
+            "question": "Will Fed cut rates in May 2026?",
+            "onChainMarketId": "1",
+            "contractCategory": "Macro",
+            "currentYesProb": 0.5319
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -242,6 +242,32 @@ describe("TxLifecycle", () => {
     }
   });
 
+  it("calls onPrompt immediately before the wallet opens (issue #125)", async () => {
+    const order: string[] = [];
+    const fakeServer = { sendTransaction: vi.fn() };
+    const runner = new TxLifecycle({
+      server: fakeServer as unknown as rpc.Server,
+      contract: "marketCore",
+    });
+
+    const hash = Buffer.alloc(32, 7);
+    const tx = {
+      result: 1n,
+      simulation: {},
+      sign: async () => {
+        order.push("sign");
+        throw new Error("User declined transaction");
+      },
+      signed: { hash: () => hash },
+    } as unknown as AssembledTransaction<bigint>;
+
+    // Rejection after the prompt proves onPrompt ran inside step 2 and that
+    // submission was never reached.
+    await expect(runner.run(tx, () => 1n, undefined, undefined, () => order.push("prompt"))).rejects.toThrow();
+    expect(order).toEqual(["prompt", "sign"]);
+    expect(fakeServer.sendTransaction).not.toHaveBeenCalled();
+  });
+
   it("unsubscribe stops notifications but run() still resolves", async () => {
     const notifications: TxPhase[] = [];
     const fakeServer = {

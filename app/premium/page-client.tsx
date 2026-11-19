@@ -1,7 +1,8 @@
 "use client";
+import Image from "next/image";
 import { Icon } from "@/components/ui/icon";
 
-import { TxReview, TxReviewPreferenceControl, shouldSkipTxReview } from "@/components/tx-review";
+import { SigningIdentities, TxReview, TxReviewPreferenceControl, hasOverriddenIdentities, shouldSkipTxReview } from "@/components/tx-review";
 import type { ReviewModel } from "@/lib/stellar/tx-decode";
 import { useSubmitQueueState } from "@/lib/stellar/submit-queue";
 
@@ -20,8 +21,8 @@ import { LiveRegion } from "@/components/ui/live-region";
 
 import { useWallet } from "@/lib/contexts/WalletContext";
 import { useUsdcTransfer, useAccountReserve, usePrepareUsdcTransfer, useAccountAuth, usePrepareMultisig } from "@/lib/hooks/useStellar";
-import { PAYMENTS_RECIPIENT, NETWORK_LABEL, NETWORK_PASSPHRASE, explorerTx } from "@/lib/stellar/config";
-import { formatUsdc, parseUsdc } from "@/lib/stellar/units";
+import { DAILY_PASS_PRICE_RAW, PAYMENTS_RECIPIENT, NETWORK_LABEL, NETWORK_PASSPHRASE, explorerTx } from "@/lib/stellar/config";
+import { formatUsdc } from "@/lib/stellar/units";
 import { TxPhase } from "@/lib/stellar/tx-lifecycle";
 import { isMultisigAccount, type MultisigSession } from "@/lib/stellar/multisig";
 import { MultisigReview } from "@/components/multisig-review";
@@ -29,6 +30,7 @@ import { PendingPaymentCard } from "@/components/pending-payment-card";
 import { isUnfinishedPayment, listPending, removePending, savePending, type PendingPayment } from "@/lib/payments/pending";
 import { verifyPendingPayment, type VerifyResult } from "@/lib/payments/verify";
 import { DAILY_PASS_TRACE_PLACEHOLDER } from "@/lib/api/traces";
+import { userMessage } from "@/lib/errors/display";
 
 function renderTxPhase(phase: TxPhase): string | null {
   switch (phase.name) {
@@ -45,13 +47,11 @@ function renderTxPhase(phase: TxPhase): string | null {
     case "confirmed":
       return "Transaction confirmed.";
     case "failed":
-      return phase.error.message;
+      return userMessage(phase.error);
     case "expired":
       return "Transaction expired without confirmation.";
   }
 }
-
-const DAILY_PASS_PRICE_RAW = parseUsdc(process.env.NEXT_PUBLIC_DAILY_PASS_PRICE_USDC || "0.5");
 
 interface Tier {
   name: string;
@@ -137,6 +137,11 @@ export default function PremiumPageClient() {
   const [paymentMethod, setPaymentMethod] = useState<"usdc" | "card">("usdc");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  // Issue #122: when this build overrides a payment identity, the user must
+  // acknowledge the addresses before the pay button unlocks.
+  const paymentIdentitiesOverridden = hasOverriddenIdentities(["paymentsRecipient", "usdc"]);
+  const [identityAcked, setIdentityAcked] = useState(false);
+  const recipientIsTreasury = IDENTITIES.paymentsRecipient.address === CONTRACTS.treasury;
   const [reviewModel, setReviewModel] = useState<{ model: ReviewModel; changedFrom?: ReviewModel } | null>(null);
   const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
   const accountAuth = useAccountAuth(address);
@@ -218,6 +223,7 @@ export default function PremiumPageClient() {
     if (!isConnected && !(await openModal())) return;
     setStatusMessage(null);
     setEscapeBlockedAnnouncement("");
+    setIdentityAcked(false);
     lastSelectedTierNameRef.current = tier.name;
     setSelectedTier(tier);
   };
@@ -234,7 +240,7 @@ export default function PremiumPageClient() {
       });
       setMultisigSession(session);
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Couldn't prepare the multisig payment.");
+      setStatusMessage(userMessage(error));
     }
   };
 
@@ -254,24 +260,35 @@ export default function PremiumPageClient() {
       return;
     }
 
-    setIsSubmitting(true);
-    let txHash: string | null = null;
-    try {
-      setStatusMessage("One more signature: this logs you in to OracleDesk and doesn't move funds.");
-      if (!(await ensureSession())) {
-        setStatusMessage("You need to sign in with your wallet before paying.");
-        return;
-      }
+    await withOperation("premium-unlock", async (opCtx) => {
+      setIsSubmitting(true);
+      track("premium_payment_started", {});
+      let txHash: string | null = null;
+      try {
+        setStatusMessage("One more signature: this logs you in to OracleDesk and doesn't move funds.");
+        if (!(await ensureSession())) {
+          setStatusMessage("You need to sign in with your wallet before paying.");
+          return;
+        }
 
-      setStatusMessage(null);
-      const sent = await transfer.mutateAsync({
-        to: PAYMENTS_RECIPIENT,
-        amount: selectedTier.priceRaw,
-        prepared: prepareTransfer.data,
-        review: reviewPreparedTransfer,
-        followUp: {
-          type: "unlock-daily-pass",
-          traceId: DAILY_PASS_TRACE_PLACEHOLDER,
+        setStatusMessage(null);
+        const sent = await transfer.mutateAsync({
+          to: PAYMENTS_RECIPIENT,
+          amount: selectedTier.priceRaw,
+          prepared: prepareTransfer.data,
+          review: reviewPreparedTransfer,
+          followUp: {
+            type: "unlock-daily-pass",
+            traceId: DAILY_PASS_TRACE_PLACEHOLDER,
+            amountRaw: selectedTier.priceRaw.toString(),
+          },
+        });
+        txHash = sent.txHash.toLowerCase();
+        setSpanAttribute("payment.tx_hash", txHash);
+
+        const payment: PendingPayment = {
+          txHash,
+          kind: "DAILY_PASS",
           amountRaw: selectedTier.priceRaw.toString(),
         },
       });
@@ -294,15 +311,15 @@ export default function PremiumPageClient() {
       setStatusMessage("Payment sent. Waiting for OracleDesk to verify it on-chain…");
       const result = await resumePayment(payment, ensureSession);
       if (!saved) {
-        setStatusMessage(`Couldn't save this payment on this device. Keep this transaction: ${explorerTx(txHash)}`);
+        setStatusMessage(`Couldn't save this payment on this device. Keep this transaction: ${explorerTx(txHash) ?? "unavailable"}`);
       } else if (result === "verified") {
-        setStatusMessage(`Your daily pass is active for 24 hours. Transaction: ${explorerTx(txHash)}`);
+        setStatusMessage(`Your daily pass is active for 24 hours. Transaction: ${explorerTx(txHash) ?? "unavailable"}`);
         setTimeout(() => setSelectedTier(null), 4000);
       } else {
         setStatusMessage("Payment received. Activation is still pending and is listed above; you don't need to pay again.");
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Payment failed. Please try again.";
+      const message = userMessage(error);
       setStatusMessage(
         txHash === null ? `${message} If funds left your wallet, check its history before paying again.` : message,
       );
@@ -449,10 +466,12 @@ export default function PremiumPageClient() {
             </div>
           </div>
           <div className="md:w-1/2 relative h-64 md:h-auto overflow-hidden">
-            <img
-              className="absolute inset-0 w-full h-full object-cover grayscale opacity-80"
-              alt="AI Reasoning Visualization"
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuAa6_iBtnOn_m37HN9i8iSM2WGtLI2O7724tEV1Lwtbv-GGPQ23M_8Ng5x56bioNBpuHpLU5pnYBL3d8-em8tJDo4E1MGMdaCxefcsadvDMXYBr7fBmUYgX9aeZNQ_Hmx2d7KN57E8mUefZU9FDAW7Dprf7vIVrX3lK4CuZXz1njfkdn9pfaRe2ujTB9rsBD_BZUXUbRwNAkdVh9-cGODrXj8J5pggMpgxMrCUHFsylQTCEbzk7CM0sJVfddH4ugiek22UZ3yMKNA"
+            <Image
+              fill
+              sizes="(min-width: 768px) 50vw, 100vw"
+              className="object-cover grayscale opacity-80"
+              alt=""
+              src="/images/premium-reasoning.webp"
             />
             <div className="absolute inset-0 bg-gradient-to-r from-surface-container-low via-transparent to-transparent md:block hidden"></div>
           </div>
@@ -536,10 +555,12 @@ export default function PremiumPageClient() {
                 onClick={() => setPaymentMethod('usdc')}
               >
                 <div className="w-10 h-10 bg-surface rounded-full flex items-center justify-center mr-4 border border-outline-variant overflow-hidden p-2">
-                  <img
+                  <Image
                     alt="USDC"
+                    width={40}
+                    height={40}
                     className="w-full h-full object-contain"
-                    src="https://lh3.googleusercontent.com/aida-public/AB6AXuBBvpQJwosd2Frufdsjv33xmFEaqtUyhsE7FZ71B5HnGDdKxuZG6lxUBHLUN_72b5kg8Agl5q3-hEH2fEuAb-_pLcvFyXnM2K9saaM5DGU8S2lDvNZOLVEDFLm5SZ9m-oysbN474n7-m_f-fQPvR6m4aDDh2HeL4e_wKmfjwe5QkDRKk08h6N-QM6DBGHrMYIomFLujEFtdcTyccMq0i3ccnRBg7U4tC0Ig0D_KgAfB-bt_2ZdSeXk_I5gkzYAQszAvYnfg5lpgPA"
+                    src="/images/usdc-token.webp"
                   />
                 </div>
                 <div className="flex-grow">
@@ -560,10 +581,33 @@ export default function PremiumPageClient() {
                 {isUnfunded && <p className="text-warning text-sm">This account cannot cover the transaction fee.</p>}
               </div>
 
+              <SigningIdentities keys={["paymentsRecipient", "usdc"]} />
+              {recipientIsTreasury && (
+                <p className="rounded-xl border border-outline-variant bg-surface-container-low p-3 text-xs text-on-surface-variant">
+                  Payments go to the OracleDesk treasury contract, which also funds the agent&apos;s trading.
+                </p>
+              )}
+              {paymentIdentitiesOverridden && (
+                <label className="flex items-center gap-2 text-sm text-on-surface-variant">
+                  <input
+                    type="checkbox"
+                    checked={identityAcked}
+                    onChange={(event) => setIdentityAcked(event.target.checked)}
+                  />
+                  I checked these addresses
+                </label>
+              )}
+
               <div className="flex flex-col gap-3">
                 <button
                   onClick={() => void handlePayment()}
-                  disabled={isSubmitting || !selectedTier?.priceRaw || !address || isWrongNetwork}
+                  disabled={
+                    isSubmitting ||
+                    !selectedTier?.priceRaw ||
+                    !address ||
+                    isWrongNetwork ||
+                    (paymentIdentitiesOverridden && !identityAcked)
+                  }
                   className="w-full bg-primary text-primary-foreground py-3 rounded-lg font-label-caps text-label-caps hover:brightness-110 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {isSubmitting ? "Processing…" : `Pay ${selectedTier?.priceStr}`}

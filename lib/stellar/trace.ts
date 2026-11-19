@@ -1,3 +1,4 @@
+import { parseCid as parseValidCid } from "@/lib/validation/ids";
 import { IPFS_GATEWAYS, IPFS_MAX_TRACE_BYTES } from "./config";
 import type { TraceWorkerRequest, TraceWorkerResponse, WorkerCheck } from "./trace.worker";
 import { gatewayUrl, normalizeHash, raceGateways, type RaceOptions, type RaceProgress, type TraceCheck } from "./trace-core";
@@ -21,9 +22,10 @@ export async function verifyTraceHash(content: Uint8Array, expectedHash: string)
   return /^[0-9a-f]{64}$/.test(normalized) && (await sha256Hex(content)) === normalized;
 }
 
-/** Gateway URL for a CID; accepts bare CIDs and ipfs:// URIs. */
-export function ipfsUrl(cid: string, gateway: string = IPFS_GATEWAYS[0]): string {
-  return gatewayUrl(cid, gateway);
+/** Gateway URL for a valid CID, or null when the value is not a CID. */
+export function ipfsUrl(cid: string, gateway: string = IPFS_GATEWAYS[0]): string | null {
+  const parsed = parseValidCid(cid);
+  return parsed ? gatewayUrl(parsed, gateway) : null;
 }
 
 export type TraceFetchOptions = Partial<
@@ -35,6 +37,7 @@ export type TraceFetchOptions = Partial<
  * on-chain hash. Results carry per-gateway attempts and the CID check.
  */
 export async function fetchAndVerifyTraceWith(cid: string, onChainHash: string, opts: TraceFetchOptions = {}): Promise<TraceCheck> {
+  if (!parseValidCid(cid)) return { status: "unavailable", reason: "Invalid CID on-chain" };
   const { check } = await raceGateways({
     cid,
     onChainHash,

@@ -21,9 +21,9 @@ const SourceTag = ({ source }: { source: "chain" | "backend" }) => (
 );
 
 function diffLink(diff: MarketDiff): string {
-  if (diff.kind === "missing-backend") return `/markets/quick-view?onChainId=${diff.onChainId}`;
-  if (diff.backendId) return `/markets/quick-view?marketId=${diff.backendId}`;
-  return `/markets/quick-view?onChainId=${diff.onChainId}`;
+  if (diff.kind === "missing-backend") return `/markets/quick-view?onChainId=${encodeURIComponent(diff.onChainId)}`;
+  if (diff.backendId) return `/markets/quick-view?marketId=${encodeURIComponent(diff.backendId)}`;
+  return `/markets/quick-view?onChainId=${encodeURIComponent(diff.onChainId)}`;
 }
 
 function value(value: bigint | number | null): string {

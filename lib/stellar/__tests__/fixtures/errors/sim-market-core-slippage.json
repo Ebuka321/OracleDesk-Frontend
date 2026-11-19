@@ -1,0 +1,16 @@
+{
+  "id": "sim/market-core/slippage",
+  "source": "simulation",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "Error",
+    "message": "HostError: Error(Contract, #12)"
+  },
+  "expect": {
+    "kind": "contract",
+    "code": "SlippageExceeded",
+    "contract": "marketCore"
+  }
+}

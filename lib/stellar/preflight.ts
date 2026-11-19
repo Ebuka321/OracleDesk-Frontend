@@ -1,7 +1,7 @@
 import type { Market, Position } from "./generated/market-core";
 import { Errors } from "./generated/market-core";
 import { calcBuy, calcSell, MAX_SETS } from "./generated/fpmm";
-import { FRIENDLY } from "./errors";
+import { messageFor } from "@/lib/errors/messages";
 import type { OutcomeTag } from "./clients";
 
 export type PreflightCode =
@@ -45,9 +45,12 @@ const ERROR_NUMBERS = new Map(
 );
 
 function failure(code: PreflightCode): PreflightFailure {
+  const message = code === "InsufficientBalance"
+    ? messageFor("kind.insufficient-balance")
+    : messageFor(`contract.marketCore.${code}`);
   return {
     code,
-    message: FRIENDLY[code] ?? `The contract would reject this (${code}).`,
+    message,
     ...(ERROR_NUMBERS.has(code) ? { contractErrorNumber: ERROR_NUMBERS.get(code) } : {}),
   };
 }

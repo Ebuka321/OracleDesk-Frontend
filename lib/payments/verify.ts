@@ -1,5 +1,6 @@
 import { ApiError } from "@/lib/api/client";
 import { activateDailyPass, getPaymentEvents } from "@/lib/api/traces";
+import { reportError } from "@/lib/observability/report";
 import { classifyUnlockError } from "./classify";
 import { updatePending, type PendingPayment, type PendingState } from "./pending";
 
@@ -85,6 +86,9 @@ async function runVerification(payment: PendingPayment, options: VerifyOptions):
       if (lastError.code === "PAYMENT_ALREADY_USED" && (await hasConfirmedPayment(txHash).catch(() => false))) {
         return finish("verified");
       }
+      // Money already left the wallet and activation will not succeed on its
+      // own: this is the case a maintainer must never lose (issue #123).
+      reportError(error, { feature: "premium", extra: { txHash } });
       return finish("failed-terminal", lastError);
     }
   }

@@ -5,7 +5,7 @@ import { fetchAndVerifyTraceWith } from "../trace";
 
 const GW1 = "https://gw1.test/ipfs";
 const GW2 = "https://gw2.test/ipfs";
-const CID = "bafy-not-a-real-cid";
+const CID = "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e";
 
 const body = '{"reasoning":"rates hold","edge":0.12}';
 const bytes = new TextEncoder().encode(body);

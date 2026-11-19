@@ -16,6 +16,7 @@ const WalletDropdownBody = () => {
   const { isWrongNetwork, walletNetwork, confirmUnknownNetwork } = useWalletNetwork();
   const { isConnecting, error } = useWalletSession();
   const { openModal, disconnect } = useWalletActions();
+  const { isWatching, viewed, clearWatch } = useViewedAddress();
   const [copied, setCopied] = useState(false);
   const balance = useUsdcBalance(address);
   const balanceState = useUsdcBalanceState(address);
@@ -186,7 +187,7 @@ const WalletDropdownBody = () => {
 
             <DM.Item asChild className="outline-none">
               <a
-                href={explorerAccount(address)}
+                href={explorerAccount(address) ?? undefined}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-surface-container focus:bg-surface-container rounded-lg transition-colors group cursor-pointer focus-visible:ring-2 focus-visible:ring-primary"

@@ -3,6 +3,8 @@ import { Icon } from "@/components/ui/icon";
 
 import { useEffect, useRef, useState } from "react";
 import type { ReviewModel } from "@/lib/stellar/tx-decode";
+import { BUILD_IDENTITY, IDENTITIES, explorerAccount, type IdentityEntry, type IdentityKey } from "@/lib/stellar/config";
+import { addressFingerprint, groupAddress, type AddressFingerprint } from "@/lib/stellar/fingerprint";
 
 const SKIP_REVIEW_KEY = "oracledesk_skip_tx_review";
 
@@ -203,5 +205,136 @@ function Row({ label, value, changed: isChanged = false }: { label: string; valu
         {value}
       </dd>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Contract identity display (issue #122)
+ * ------------------------------------------------------------------ */
+
+function useCopyAddress(address: string) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard
+      ?.writeText(address)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => undefined);
+  };
+  return { copied, copy };
+}
+
+/**
+ * One contract/account identity: label, what it does, the full address in
+ * 4-character groups (so the middle can be compared, not just the ends),
+ * a three-word fingerprint, where the address came from, and an explorer
+ * link. An invalid address (e.g. a bad env override) degrades to a warning
+ * instead of breaking the page.
+ */
+export function ContractIdentity({ entry, compact = false }: { entry: IdentityEntry; compact?: boolean }) {
+  const { copied, copy } = useCopyAddress(entry.address);
+  const groups = groupAddress(entry.address);
+  let fingerprint: AddressFingerprint | null = null;
+  try {
+    fingerprint = addressFingerprint(entry.address);
+  } catch {
+    fingerprint = null;
+  }
+
+  return (
+    <li
+      data-testid={`contract-identity-${entry.key}`}
+      className={`rounded-xl border border-outline-variant bg-surface-container-low p-3 ${compact ? "space-y-1" : "space-y-2"}`}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="font-body-md font-medium">{entry.label}</span>
+        {entry.matchesManifest ? (
+          <span className="rounded-full bg-primary-container/10 px-2 py-0.5 font-label-caps text-[10px] uppercase tracking-wider text-primary">
+            Official deployment @{BUILD_IDENTITY.manifestCommit.slice(0, 7)}
+          </span>
+        ) : (
+          <span className="rounded-full bg-error-container/15 px-2 py-0.5 font-label-caps text-[10px] uppercase tracking-wider text-error">
+            Overridden by this build
+          </span>
+        )}
+      </div>
+
+      {!compact && <p className="text-xs text-on-surface-variant">{entry.role}</p>}
+
+      <div className="space-y-1">
+        <span className="sr-only">{entry.address}</span>
+        <span aria-hidden="true" className="inline-flex flex-wrap gap-x-1 font-data-mono text-xs text-on-surface">
+          {groups.map((group, index) => (
+            <span
+              key={index}
+              className={`rounded px-0.5 ${index % 2 === 0 ? "bg-surface" : "bg-surface-container-lowest"}`}
+            >
+              {group}
+            </span>
+          ))}
+        </span>
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <button type="button" onClick={copy} className="text-primary underline hover:text-primary/80">
+            {copied ? "Copied" : "Copy"}
+          </button>
+          {!compact && (
+            <a
+              href={explorerAccount(entry.address)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline hover:text-primary/80"
+            >
+              View on Stellar Expert
+            </a>
+          )}
+        </div>
+      </div>
+
+      {fingerprint ? (
+        <p className="text-xs text-on-surface-variant">
+          Fingerprint:{" "}
+          <span
+            role="img"
+            aria-label={`Fingerprint words: ${fingerprint.words.join(" ")}`}
+            className="font-data-mono font-medium text-on-surface"
+          >
+            {fingerprint.words.join(" · ")}
+          </span>
+        </p>
+      ) : (
+        <p className="text-xs text-error">This address is not a valid Stellar account or contract id.</p>
+      )}
+
+      {entry.source === "env" && entry.matchesManifest && (
+        <p className="text-xs text-on-surface-variant">Set explicitly by this build; it matches the official deployment.</p>
+      )}
+    </li>
+  );
+}
+
+/** True when any of the given identities differs from the official manifest. */
+export function hasOverriddenIdentities(keys: IdentityKey[]): boolean {
+  return keys.some((key) => !IDENTITIES[key].matchesManifest);
+}
+
+/**
+ * The list shown before a signing button: who the transaction will touch,
+ * what they are, their full address, fingerprint and source.
+ */
+export function SigningIdentities({ keys, compact = false }: { keys: IdentityKey[]; compact?: boolean }) {
+  const entries = keys.map((key) => IDENTITIES[key]);
+  return (
+    <section aria-label="Contract identities" className="space-y-3">
+      <h4 className="font-label-caps text-label-caps text-on-surface-variant">
+        You are about to interact with
+      </h4>
+      <ul className="space-y-3">
+        {entries.map((entry) => (
+          <ContractIdentity key={entry.key} entry={entry} compact={compact} />
+        ))}
+      </ul>
+    </section>
   );
 }

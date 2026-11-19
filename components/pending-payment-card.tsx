@@ -67,7 +67,7 @@ export function PendingPaymentCard({ payment, busy, wrongNetwork, onRetry, onDis
       </div>
       <p className="text-sm text-on-surface-variant">{body}</p>
       <a
-        href={explorerTx(payment.txHash)}
+        href={explorerTx(payment.txHash) ?? undefined}
         target="_blank"
         rel="noopener noreferrer"
         className="underline font-data-mono text-xs break-all"

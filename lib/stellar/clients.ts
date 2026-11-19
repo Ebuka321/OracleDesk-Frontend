@@ -185,6 +185,82 @@ export function reasoningRegistry(signer?: Signer, opts?: { timeoutInSeconds?: n
     : shared("reasoningRegistry", opts, rpcUrl);
 }
 
+export interface ClientConfig {
+  rpcUrl: string;
+  networkPassphrase: string;
+  contracts: Record<string, string>;
+}
+
+export function createClients(cfg: ClientConfig) {
+  const { rpcUrl, networkPassphrase, contracts } = cfg;
+
+  const clientOptions = (
+    contractId: string,
+    signer?: Signer,
+    extra?: { timeoutInSeconds?: number },
+  ): ClientOptions & { timeoutInSeconds?: number } => {
+    return {
+      contractId,
+      networkPassphrase,
+      rpcUrl,
+      allowHttp: rpcUrl.startsWith("http://"),
+      server: rpcServer(rpcUrl),
+      ...(signer ? { publicKey: signer.publicKey, signTransaction: signer.signTransaction } : {}),
+      ...(extra?.timeoutInSeconds !== undefined ? { timeoutInSeconds: extra.timeoutInSeconds } : {}),
+    };
+  };
+
+  const client = <K extends ClientName>(name: K, signer?: Signer, opts?: { timeoutInSeconds?: number }): ClientFor<K> => {
+    const contractId = contracts[name];
+    if (!contractId) throw new Error(`Missing contract address for ${name}`);
+    const Ctor = CLIENT_CTORS[name] as unknown as new (options: ClientOptions) => ClientFor<K>;
+    return new Ctor(clientOptions(contractId, signer, opts));
+  };
+
+  return {
+    marketCore: (signer?: Signer, opts?: { timeoutInSeconds?: number }) => client("marketCore", signer, opts),
+    treasury: (signer?: Signer, opts?: { timeoutInSeconds?: number }) => client("treasury", signer, opts),
+    resolver: (signer?: Signer, opts?: { timeoutInSeconds?: number }) => client("resolver", signer, opts),
+    reasoningRegistry: (signer?: Signer, opts?: { timeoutInSeconds?: number }) => client("reasoningRegistry", signer, opts),
+    token: {
+      name(contractId: string = contracts.usdc): Promise<AssembledTransaction<string>> {
+        return AssembledTransaction.build<string>({
+          ...clientOptions(contractId),
+          method: "name",
+          args: [],
+          parseResultXdr: (v) => String(scValToNative(v)),
+        });
+      },
+      balance(owner: string, contractId: string = contracts.usdc): Promise<AssembledTransaction<bigint>> {
+        return AssembledTransaction.build<bigint>({
+          ...clientOptions(contractId),
+          method: "balance",
+          args: [new Address(owner).toScVal()],
+          parseResultXdr: (v) => BigInt(scValToNative(v)),
+        });
+      },
+      transfer(
+        params: { from: string; to: string; amount: bigint },
+        signer: Signer,
+        contractId: string = contracts.usdc,
+        txOptions: { timeoutInSeconds?: number } = {},
+      ): Promise<AssembledTransaction<null>> {
+        return AssembledTransaction.build<null>({
+          ...clientOptions(contractId, signer),
+          ...txOptions,
+          method: "transfer",
+          args: [
+            new Address(params.from).toScVal(),
+            new Address(params.to).toScVal(),
+            nativeToScVal(params.amount, { type: "i128" }),
+          ],
+          parseResultXdr: () => null,
+        });
+      },
+    },
+  };
+}
+
 /** Test-only: clears memoised specs/clients so a test can observe a cold start. */
 export function __resetClientCaches(): void {
   specs.clear();
