@@ -21,6 +21,7 @@ export const DESCRIBED_ERROR_KINDS = [
   "expired",
   "archived",
   "bad-auth",
+  "effects-mismatch",
   "unknown",
 ] as const;
 
