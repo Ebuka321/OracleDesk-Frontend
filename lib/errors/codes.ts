@@ -14,6 +14,7 @@ export const DESCRIBED_ERROR_KINDS = [
   "no-trustline",
   "contract",
   "wrong-network",
+  "watch-only",
   "disconnected",
   "network",
   "submission",

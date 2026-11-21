@@ -1,24 +1,30 @@
 import { UserFacingError } from "./errors";
 import type { Signer } from "./clients";
+import { NETWORK_LABEL } from "./config";
 import { asSignerAddress, type SignerAddress } from "./identity";
 import type { IntegrityResult, ContractKey } from "./contract-check";
+import { CAPABILITIES, type Capability } from "./capability-registry";
 
 export interface WriteGuardContext {
   signer: Signer | null;
   isWrongNetwork: boolean;
+  rpcNetworkStatus?: "ok" | "mismatch" | "unreachable" | "checking";
+  walletNetworkState?: "match" | "mismatch" | "unknown";
+  walletNetworkConfirmed?: boolean;
   isWatching?: boolean;
   watchedAddress?: string | null;
   accountFunded?: boolean;
   updatePending?: boolean;
   integrity?: Record<string, IntegrityResult> | null;
   target?: ContractKey | "usdc";
+  requires?: readonly Capability[];
 }
 
 /**
  * Pure assertion validating all write prerequisites:
  * 1. App bundle is up to date (no pending service worker update)
  * 2. Wallet is connected
- * 3. Connected wallet is on the correct network (Testnet)
+ * 3. Connected wallet & RPC are on the correct network (Testnet)
  * 4. User is not currently in watch-only mode for another address
  * 5. On-chain contract specification matches bundled bindings
  * 6. Account is funded with XLM
@@ -33,11 +39,20 @@ export function assertCanWrite(ctx: WriteGuardContext): SignerAddress {
     throw new UserFacingError({ kind: "disconnected", message: "Connect your wallet first." });
   }
   if (ctx.isWrongNetwork) {
-    throw new UserFacingError({ kind: "wrong-network", message: "Switch your wallet to Stellar Testnet and try again." });
+    throw new UserFacingError({ kind: "wrong-network", message: `Switch your wallet to ${NETWORK_LABEL} and try again.` });
+  }
+  if (ctx.rpcNetworkStatus === "mismatch") {
+    throw new UserFacingError({ kind: "wrong-network", message: "The RPC is on a different Stellar network. Signing is disabled." });
+  }
+  if (ctx.walletNetworkState === "unknown" && !ctx.walletNetworkConfirmed) {
+    throw new UserFacingError({
+      kind: "wrong-network",
+      message: `Confirm your wallet is on ${NETWORK_LABEL} first in the wallet menu.`,
+    });
   }
   if (ctx.isWatching && ctx.watchedAddress && ctx.watchedAddress !== ctx.signer.publicKey) {
     throw new UserFacingError({
-      kind: "disconnected",
+      kind: "watch-only",
       message: "You're viewing another address. Connect your own wallet to trade.",
     });
   }
@@ -48,6 +63,20 @@ export function assertCanWrite(ctx: WriteGuardContext): SignerAddress {
         kind: "contract",
         message: "This app is out of date with the deployed contracts. Trading is disabled until it's updated.",
       });
+    }
+  }
+  if (ctx.requires && ctx.requires.length > 0 && ctx.integrity) {
+    for (const cap of ctx.requires) {
+      const contract = CAPABILITIES[cap].contract;
+      const res = ctx.integrity[contract];
+      if (!res || res.status === "unchecked") continue;
+      const compat = res.capabilities?.[cap];
+      if (!compat?.ok) {
+        throw new UserFacingError({
+          kind: "contract",
+          message: "This action isn't available on the deployed contracts yet.",
+        });
+      }
     }
   }
   if (ctx.accountFunded === false) {

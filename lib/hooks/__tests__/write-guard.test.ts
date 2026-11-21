@@ -43,7 +43,7 @@ describe("assertCanWrite", () => {
       });
     } catch (e: unknown) {
       const err = e as UserFacingError;
-      expect(err.described.kind).toBe("disconnected");
+      expect(err.described.kind).toBe("watch-only");
       expect(err.message).toBe("You're viewing another address. Connect your own wallet to trade.");
     }
   });
@@ -131,5 +131,56 @@ describe("assertCanWrite", () => {
         },
       }),
     ).toThrowError(UserFacingError);
+  });
+
+  it("allows when integrity is unchecked or not yet loaded", () => {
+    expect(
+      assertCanWrite({
+        ...baseContext,
+        target: "marketCore",
+        integrity: undefined,
+      }),
+    ).toBe(SIGNER_ADDRESS);
+    expect(
+      assertCanWrite({
+        ...baseContext,
+        target: "marketCore",
+        integrity: {
+          marketCore: {
+            contract: "marketCore",
+            id: "C123",
+            status: "unchecked",
+            checkedAtLedger: 0,
+          },
+        },
+      }),
+    ).toBe(SIGNER_ADDRESS);
+  });
+
+  it("throws when RPC network status is mismatch", () => {
+    expect(() =>
+      assertCanWrite({
+        ...baseContext,
+        rpcNetworkStatus: "mismatch",
+      }),
+    ).toThrowError(UserFacingError);
+  });
+
+  it("throws when wallet network is unknown and unconfirmed, allows when confirmed", () => {
+    expect(() =>
+      assertCanWrite({
+        ...baseContext,
+        walletNetworkState: "unknown",
+        walletNetworkConfirmed: false,
+      }),
+    ).toThrowError(UserFacingError);
+
+    expect(
+      assertCanWrite({
+        ...baseContext,
+        walletNetworkState: "unknown",
+        walletNetworkConfirmed: true,
+      }),
+    ).toBe(SIGNER_ADDRESS);
   });
 });

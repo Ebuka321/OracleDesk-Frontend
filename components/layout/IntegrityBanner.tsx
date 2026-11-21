@@ -16,6 +16,7 @@ export function IntegrityBanner() {
   const failingContracts = results.filter(
     (r) => r.status === "mismatch" || r.status === "not-found" || r.status === "wrong-kind",
   );
+  const compatibleContracts = results.filter((r) => r.status === "compatible");
   const uncheckedContracts = results.filter((r) => r.status === "unchecked");
 
   const allNotFound = results.length > 0 && results.every((r) => r.status === "not-found");
@@ -25,7 +26,7 @@ export function IntegrityBanner() {
       <div
         role="alert"
         aria-live="assertive"
-        className="w-full bg-destructive/15 border-b border-destructive/40 text-destructive-foreground px-4 py-3 text-sm z-50 sticky top-0 backdrop-blur-md"
+        className="w-full bg-destructive/15 border-b border-destructive/40 text-destructive-foreground px-4 py-3 text-sm backdrop-blur-md"
       >
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
           <div className="flex items-start gap-3">
@@ -78,13 +79,48 @@ export function IntegrityBanner() {
     );
   }
 
+  if (compatibleContracts.length > 0) {
+    const missingCaps = compatibleContracts.flatMap((c) =>
+      Object.entries(c.capabilities ?? {})
+        .filter(([, compat]) => compat && !compat.ok)
+        .map(([cap, compat]) => ({
+          cap,
+          reason: (compat as { ok: false; reason: string }).reason,
+        })),
+    );
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="w-full bg-surface-container-low border-b border-outline-variant text-on-surface px-4 py-2 text-xs backdrop-blur-md"
+      >
+        <div className="max-w-7xl mx-auto">
+          <details>
+            <summary className="cursor-pointer font-medium text-on-surface-variant hover:text-on-surface">
+              Some newer features are unavailable on this deployment
+            </summary>
+            {missingCaps.length > 0 && (
+              <ul className="mt-2 space-y-1 font-mono text-[11px] text-on-surface-variant">
+                {missingCaps.map((m) => (
+                  <li key={m.cap}>
+                    <span className="font-semibold text-on-surface">{m.cap}</span>: {m.reason}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </details>
+        </div>
+      </div>
+    );
+  }
+
   if (uncheckedContracts.length > 0) {
     const isArchived = uncheckedContracts.some((u) => u.detail === "archived");
     return (
       <div
         role="status"
         aria-live="polite"
-        className="w-full bg-amber-500/15 border-b border-amber-500/30 text-amber-200 px-4 py-2 text-xs z-40 sticky top-0 backdrop-blur-md"
+        className="w-full bg-amber-500/15 border-b border-amber-500/30 text-amber-200 px-4 py-2 text-xs backdrop-blur-md"
       >
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">

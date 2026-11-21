@@ -4,6 +4,7 @@ import { describeError, type ContractName } from "@/lib/stellar/errors";
 import { DEBUG_ENABLED } from "@/lib/diagnostics/flags";
 import { recordSimulation } from "@/lib/diagnostics/events";
 import { currentRpcUrl, rpcPool } from "@/lib/stellar/clients";
+import { isRateLimitError } from "@/lib/stellar/rpc-scheduler";
 
 /**
  * Builds (and so simulates) a read against the pool's current endpoint, and
@@ -24,8 +25,10 @@ export async function measured<Tx extends AssembledTransaction<unknown>>(method:
     return tx;
   } catch (err) {
     try {
-      const status = /\b429\b|rate.?limit/i.test(String((err as Error)?.message ?? err)) ? 429 : undefined;
-      rpcPool()?.record(url, { ms: Date.now() - t0, ok: false, status });
+      // 429s are already recorded by the rpcServer proxy with Retry-After; avoid double-counting.
+      if (!isRateLimitError(err)) {
+        rpcPool()?.record(url, { ms: Date.now() - t0, ok: false });
+      }
       if (DEBUG_ENABLED) recordSimulation({ at: Date.now(), contract, method, error: describeError(err).message });
     } catch { /* telemetry only */ }
     throw err;

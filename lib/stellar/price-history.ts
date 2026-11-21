@@ -1,5 +1,6 @@
 import type { rpc } from "@stellar/stellar-sdk";
 import { rpcServer } from "./clients";
+import { withRpcPriority } from "./rpc-scheduler";
 import { CONTRACTS, NETWORK_PASSPHRASE } from "./config";
 import { MathError, priceYesBps, seedReserves } from "./generated/fpmm";
 import { decodeMarketCoreEvent, marketTopicFilter, type DecodedEvent } from "./events";
@@ -138,7 +139,7 @@ export function rpcPriceHistorySource(
 
   return {
     async load(marketId: bigint, since?: CacheState): Promise<PriceHistoryBatch> {
-      const health = await server.getHealth();
+      const health = await withRpcPriority({ priority: "background", tag: "price-history" }, () => server.getHealth());
       const oldestLedger = health.oldestLedger;
       const latestLedger = health.latestLedger;
       const filters = marketTopicFilter(marketId, PRICE_HISTORY_FILTERS);
@@ -150,9 +151,11 @@ export function rpcPriceHistorySource(
       let cursor = retention ? "" : (since?.cursor ?? "");
 
       const readPage = async () => {
-        const response = cursor
-          ? await server.getEvents({ filters, cursor, limit: pageLimit })
-          : await server.getEvents({ filters, startLedger: Math.max(1, oldestLedger), endLedger: latestLedger + 1, limit: pageLimit });
+        const response = await withRpcPriority({ priority: "background", tag: "price-history" }, () =>
+          cursor
+            ? server.getEvents({ filters, cursor, limit: pageLimit })
+            : server.getEvents({ filters, startLedger: Math.max(1, oldestLedger), endLedger: latestLedger + 1, limit: pageLimit }),
+        );
         events.push(...response.events);
         const previous = cursor;
         cursor = response.cursor ?? "";

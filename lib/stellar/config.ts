@@ -1,6 +1,7 @@
 import { StrKey } from "@stellar/stellar-sdk";
 import { parseAccount, parseContract, parseTxHash } from "../validation/ids";
 import deployments from "./generated/deployments.testnet.json";
+import { CONTRACT_MANIFEST } from "./generated/contract-manifest";
 import {
   DEFAULT_IPFS_GATEWAY,
   DEFAULT_IPFS_MAX_TRACE_BYTES,

@@ -42,6 +42,28 @@ A backend market links to the chain through `onChainMarketId` (market-core's `u6
 
 ## Wallet and login
 
+### Provider tree
+
+`app/layout.tsx` nests providers and global banners in this order:
+
+1. `BuildIdentityBanner` (outside providers; reads static `BUILD_IDENTITY`)
+2. `PwaRegistrar` (service-worker registration and update-pending context)
+3. `WalletProvider` (wallet adapter, network state, signer, query client)
+4. `ViewedAddressProvider` (must sit inside `WalletProvider` for `useWalletAddress()` and `useQueryClient()`)
+5. `CopyTradeReconciler`, `ErrorReportingInit`, `ConsentBanner`
+6. `RealtimeProvider` → `HealthProvider` → `InboxProvider`
+7. `Navbar`, followed by a sticky wrapper containing `IntegrityBanner` and `ViewingBanner` (so they stack rather than overlapping), then `NetworkConsistencyBanner`, `RpcDegradedBanner`, `#main-content`, `Footer`, `DebugMount`, `WebVitals`.
+
+### CI jobs
+
+| Job | Purpose |
+|---|---|
+| `install` | Installs root `node_modules` once and caches by `package-lock.json` hash |
+| `frontend` | Runs `check:ci-claims`, bindings/env/SDK/API/docs checks, `typecheck`, `lint`, `test`, `test:scripts`, `build`, origin/secret scans |
+| `x402-contract` | Caches x402 service deps, runs `check:x402`, `tsc -p e2e/x402`, and `e2e:x402` inside `unshare --net` (no egress) |
+| `secrets-canary` | Verifies `scan-build-secrets.mjs` catches a synthetic canary secret |
+| `perf` | Builds production bundle and runs Lighthouse CI |
+
 ### User-scoped data
 
 Backend routes using `requireAuth` or `optionalAuth` use `userKeys`, prefixed
@@ -320,6 +342,15 @@ The home hero shows the most liquid ACTIVE market from the markets feed (`pickFe
 
 `RPC_URLS` = `NEXT_PUBLIC_STELLAR_RPC_URL` (primary) + `NEXT_PUBLIC_STELLAR_RPC_URLS`. `lib/stellar/rpc-pool.ts` verifies each endpoint with `getNetwork` (wrong passphrase → never used), probes `getLatestLedger` every 15 s while the tab is visible, and keeps the last 50 samples per endpoint (p50/p95, error rate, 429s with Retry-After back-off, ledger lag). Selection is sticky: it switches only when another endpoint scores ≥30% better on two consecutive probes, or the current one is down/degraded. Write hooks run inside `withPinnedRpc`, so quote, simulate, submit and polling use one endpoint; a failed submission is never resent elsewhere. Reads carry the ledger they were simulated at (quick-view shows "as of ledger N") and an older-ledger result never replaces newer cached data. Single-endpoint setups behave as before.
 
+### RPC scheduler (`lib/stellar/rpc-scheduler.ts`)
+
+Every `rpcServer()` method except `getNetwork` passes through `RpcScheduler` in the browser (pass-through on the server and in node tests):
+
+- **Buckets**: per-`(endpoint, methodClass)` token buckets (`simulate`, `send`, `poll`, `entries`, `events`, `meta`) using AIMD (`onRateLimited` halves rate down to 0.2/s and honours `Retry-After`; `onSuccess` adds 0.1/s up to the class ceiling).
+- **Priority classes**: `submit` (writes under `withPinnedRpc`), `interactive` (quotes and ticket reads), `normal` (default React Query refetches), `background` (events, price history, equity, position scans, probes).
+- **25% reserve rule**: `background` calls can only take a token when `tokens > ceil(burst * 0.25)`, reserving headroom for `submit` and `interactive` work. `submit` `getTransaction` polls retain a 1-per-2 s floor even while paused.
+- **Fairness & tagging**: Within a priority, per-`tag` FIFO sub-queues are served round-robin. Callers tag background/interactive work synchronously with `withRpcPriority({ priority, tag }, () => ...)`. Queued calls are cancellable via `AbortSignal` and rejected if `rpcNetworkEpoch()` changes while queued.
+
 ## Trace verification
 
 The on-chain `trace_hash` decides whether content is shown. Everything else is evidence about why a check failed.
@@ -395,6 +426,16 @@ At startup, the frontend verifies that the deployed contracts match the bundled 
 2. **Wasm Spec Fingerprint**: For Wasm contracts, extracts the executable's `wasmHash`, fetches the contract code entry if not cached, parses the embedded `contractspecv0` section, normalizes spec entries (stripping doc fields and sorting by kind and name), and computes a SHA-256 fingerprint. The fingerprint is cached in `sessionStorage` per content-addressed `wasmHash`.
 3. **Stellar Asset Contract (SAC) Verification**: For USDC, verifies that the instance executable is `contractExecutableStellarAsset`, checks that the contract ID matches `new Asset(code, issuer).contractId(NETWORK_PASSPHRASE)` for `NEXT_PUBLIC_USDC_ASSET`, and simulates `name()`.
 4. **Write-Path Gating**: `useContractIntegrity()` evaluates network status. If any contract status is `mismatch`, `not-found`, or `wrong-kind`, `useWriteGuard()` blocks transaction signing with a `UserFacingError({ kind: "contract" })`, and `IntegrityBanner.tsx` renders a non-dismissable alert detailing the discrepancies. Temporary RPC connectivity failures yield `unchecked` and do not block writes.
+
+### Contract capabilities (`lib/stellar/capabilities.ts`, `lib/stellar/capability-registry.ts`)
+
+Instead of treating any spec difference as a total mismatch, `resolveCapabilities` compares the on-chain `contractspecv0` structurally (function inputs/outputs and all reachable UDTs: structs, unions, ordered enums, and superset-compatible error enums; doc strings and entry order are ignored):
+
+- `match`: fingerprint equals the bundled spec.
+- `compatible`: core capabilities pass while some optional capabilities (`marketCore.buyV2`, `marketCore.splitMerge`, `registry.chainedTraces`, `treasury.vault`, etc.) are missing or incompatible. `IntegrityBanner` shows a quiet expandable info strip and core trading stays enabled.
+- `mismatch`: any `core` capability fails.
+
+`useContractCapabilities()` and `getCapabilitySnapshot()` share the React Query cache and `sessionStorage` (`oracledesk_wasm_caps_v1_<wasmHash>_<BUILD_ID>`). `<RequiresCapability cap="..." fallback={...}>` gates optional UI, and `assertCanWrite` enforces `requires?: Capability[]`. Operators can inspect any deployed contract with `node scripts/capabilities-report.mjs --contract <C...> --rpc <url>`.
 
 ## Viewed address vs signer (Watch-only mode)
 

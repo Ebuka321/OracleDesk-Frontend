@@ -42,6 +42,7 @@ export interface RpcPoolOptions {
   probeIntervalMs?: number;
   now?: () => number;
   fetchImpl?: typeof fetch;
+  admit?: (url: string) => boolean;
 }
 
 const RING = 50;
@@ -115,6 +116,7 @@ export class RpcPool {
   private readonly probeIntervalMs: number;
   private readonly now: () => number;
   private readonly fetchImpl: typeof fetch;
+  private readonly admit?: (url: string) => boolean;
   private selection: Selection;
   private leases = new Map<number, string>();
   private nextLeaseId = 1;
@@ -131,6 +133,7 @@ export class RpcPool {
     this.probeIntervalMs = opts.probeIntervalMs ?? 15_000;
     this.now = opts.now ?? (() => Date.now());
     this.fetchImpl = opts.fetchImpl ?? ((...a) => fetch(...a));
+    this.admit = opts.admit;
     this.selection = { current: urls[0], challenger: null, streak: 0 };
     this.refresh();
   }
@@ -237,7 +240,7 @@ export class RpcPool {
     const now = this.now();
     await Promise.all(
       this.endpoints
-        .filter((ep) => ep.verified !== "wrong" && ep.backoffUntil <= now)
+        .filter((ep) => ep.verified !== "wrong" && ep.backoffUntil <= now && (!this.admit || this.admit(ep.url)))
         .map(async (ep) => {
           const t0 = this.now();
           try {
@@ -333,10 +336,14 @@ export class RpcPool {
 let _pool: RpcPool | null = null;
 
 /** Browser singleton, created lazily. Returns null on the server (prerender, tests without a window). */
-export function getRpcPool(urls: readonly string[], passphrase: string): RpcPool | null {
+export function getRpcPool(
+  urls: readonly string[],
+  passphrase: string,
+  opts?: Pick<RpcPoolOptions, "admit">,
+): RpcPool | null {
   if (typeof window === "undefined") return null;
   if (!_pool) {
-    _pool = new RpcPool(urls, { passphrase });
+    _pool = new RpcPool(urls, { passphrase, admit: opts?.admit });
     if (urls.length > 1) _pool.start();
   }
   return _pool;

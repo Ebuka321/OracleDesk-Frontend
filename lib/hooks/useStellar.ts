@@ -5,7 +5,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNetworkMutation as useMutation } from "@/lib/query/useNetworkMutation";
 import { isWalletCreator, settlementOf } from "@/lib/stellar/lp";
 import type { ViewedAddress } from "@/lib/stellar/identity";
-import type { ContractKey } from "@/lib/stellar/contract-check";
+import { useContractIntegrity, type ContractKey } from "@/lib/stellar/contract-check";
+import { useViewedAddress } from "@/lib/hooks/useViewedAddress";
+import { assertCanWrite } from "@/lib/stellar/write-guard";
 import { Keypair, scValToNative, TransactionBuilder, xdr } from "@stellar/stellar-sdk";
 import type { AssembledTransaction } from "@stellar/stellar-sdk/contract";
 import { useWallet } from "@/lib/contexts/WalletContext";
@@ -72,6 +74,8 @@ import { TxLifecycle } from "@/lib/stellar/tx-lifecycle";
 export { stellarKeys } from "@/lib/stellar/hooks/keys";
 import { stellarKeys } from "@/lib/stellar/hooks/keys";
 import { measured, simRecord } from "@/lib/stellar/hooks/telemetry";
+import { addBreadcrumb, reportError } from "@/lib/observability/report";
+import { bucketDuration, track } from "@/lib/observability/analytics";
 
 const toId = (id: bigint | string | number) => BigInt(id);
 
@@ -413,7 +417,7 @@ export function useEnableUsdc() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async () => {
-      const wallet = signer();
+      const wallet = signer("usdc");
       const asset = await usdcClassicAsset();
       const current = await getTrustlineState(wallet.publicKey, asset);
       if (current.kind === "native" || (current.kind === "present" && current.authorized)) {
@@ -662,34 +666,31 @@ export function useVerifiedTrace(onChainTraceId: bigint | string | null | undefi
 export function useWriteGuard(): (target?: ContractKey | "usdc") => Signer {
   const signer = useWalletSigner();
   const { isWrongNetwork, rpcNetwork, walletNetwork } = useWalletNetwork();
+  const { viewed, isWatching } = useViewedAddress();
+  const { data: integrity } = useContractIntegrity();
   const queryClient = useQueryClient();
   const updatePending = useUpdatePending();
   // The guard's identity is stable, so the write hooks don't get a new
   // mutation function on every wallet change.
-  return useCallback(() => {
-    // Never sign with an outdated bundle (stale contract ids or slippage logic).
-    if (updatePending) {
-      throw new UserFacingError({ kind: "unknown", message: "Reload to update OracleDesk before signing." });
-    }
-    if (!signer) {
-      throw new UserFacingError({ kind: "disconnected", message: "Connect your wallet first." });
-    }
-    if (isWrongNetwork) {
-      throw new UserFacingError({ kind: "wrong-network", message: `Switch your wallet to ${NETWORK_LABEL} and try again.` });
-    }
-    if (rpcNetwork?.status === "mismatch") throw new UserFacingError({ kind: "wrong-network", message: "The RPC is on a different Stellar network. Signing is disabled." });
-    if (walletNetwork?.state === "unknown" && !walletNetwork.confirmedByUser) throw new UserFacingError({ kind: "wrong-network", message: `Confirm your wallet is on ${NETWORK_LABEL} first in the wallet menu.` });
-    // An unfunded account has no ledger entry, so building any transaction
-    // from it would fail with a raw SDK error. Refuse here, in plain words.
-    const account = queryClient.getQueryData<AccountReserveState>(stellarKeys.account(signer.publicKey));
-    if (account && !account.funded) {
-      throw new UserFacingError({
-        kind: "account-not-found",
-        message: "Your Stellar account isn't activated yet. Fund it with XLM first.",
-      });
-    }
-    return signer;
-  }, [signer, isWrongNetwork, rpcNetwork, walletNetwork, queryClient, updatePending]);
+  return useCallback((target?: ContractKey | "usdc") => {
+    const account = signer
+      ? queryClient.getQueryData<AccountReserveState>(stellarKeys.account(signer.publicKey))
+      : undefined;
+    assertCanWrite({
+      signer,
+      isWrongNetwork,
+      rpcNetworkStatus: rpcNetwork?.status,
+      walletNetworkState: walletNetwork?.state,
+      walletNetworkConfirmed: walletNetwork?.confirmedByUser,
+      isWatching,
+      watchedAddress: viewed,
+      accountFunded: account ? account.funded : undefined,
+      updatePending,
+      integrity,
+      target,
+    });
+    return signer!;
+  }, [signer, isWrongNetwork, rpcNetwork, walletNetwork, isWatching, viewed, queryClient, updatePending, integrity]);
 }
 
 export function useInvalidateAfterTrade() {
@@ -1151,7 +1152,7 @@ export function useBuy() {
     onMutate: async (v: BuyParams & { prepared?: PreparedBuy }) => {
       addBreadcrumb("mutation", "buy started");
       submittedAt.current = 0;
-      return cancelTradeReads(queryClient, String(v.marketId), guard().publicKey);
+      return cancelTradeReads(queryClient, String(v.marketId), guard("marketCore").publicKey);
     },
     onError: (error, v, context) => {
       const kind = describeError(error).kind;
@@ -1168,7 +1169,7 @@ export function useBuy() {
         amount: bucketUsdc(params.collateralIn),
         slippageBps: coerceSlippage(params.slippageBps),
       });
-      const signer = guard();
+      const signer = guard("marketCore");
       const { marketId, outcome, collateralIn } = params;
       return runQueuedWrite(signer, `Buy ${outcome} on #${marketId}`, dedupeValue("buy", marketId, outcome, collateralIn), guard, async () => {
         await requireUsdcTrustline(signer.publicKey);
@@ -1236,7 +1237,7 @@ export function useSell() {
     onMutate: async (v: SellParams) => {
       addBreadcrumb("mutation", "sell started");
       submittedAt.current = 0;
-      return cancelTradeReads(queryClient, String(v.marketId), guard().publicKey);
+      return cancelTradeReads(queryClient, String(v.marketId), guard("marketCore").publicKey);
     },
     onError: (error, v, context) => {
       const kind = describeError(error).kind;
@@ -1246,7 +1247,7 @@ export function useSell() {
     },
     mutationFn: async (params: SellParams) => {
       const { marketId, outcome, shares, slippageBps } = params;
-      const signer = guard();
+      const signer = guard("marketCore");
       return runQueuedWrite(signer, `Sell ${outcome} on #${marketId}`, dedupeValue("sell", marketId, outcome, params.shares), guard, async () => {
       await requireUsdcTrustline(signer.publicKey);
       const id = toId(marketId);
@@ -1326,7 +1327,7 @@ export function useRedeem() {
   const mutation = useMutation({
     onMutate: async (v: { marketId: bigint | string }) => {
       submittedAt.current = 0;
-      return cancelTradeReads(queryClient, String(v.marketId), guard().publicKey);
+      return cancelTradeReads(queryClient, String(v.marketId), guard("marketCore").publicKey);
     },
     onError: (error, v, context) => {
       const kind = describeError(error).kind;
@@ -1337,7 +1338,7 @@ export function useRedeem() {
     mutationFn: async ({ marketId, review }: { marketId: bigint | string; review?: PreparedWriteReview }) => {
       submittedAt.current = Date.now();
       track("trade_submitted", { action: "redeem" });
-      const signer = guard();
+      const signer = guard("marketCore");
       return runQueuedWrite(signer, `Redeem #${marketId}`, dedupeValue("redeem", marketId), guard, async () => {
       await requireUsdcTrustline(signer.publicKey);
       throwPreflight(preflightRedeem(await fetchTradePreflightInput(toId(marketId), signer.publicKey, false)));
@@ -1388,7 +1389,7 @@ export function useClaimPoolRemainder() {
   const runner = useTxRunner("marketCore");
   const mutation = useMutation({
     mutationFn: async ({ marketId }: { marketId: bigint | string }) => {
-      const signer = guard();
+      const signer = guard("marketCore");
       return runQueuedWrite(signer, `Claim pool #${marketId}`, dedupeValue("claim-pool", marketId), guard, async () => {
         const { market } = await fetchOnChainMarketBySimulation(marketId);
         if (!isWalletCreator(market, signer.publicKey)) throw new UserFacingError({ kind: "contract", message: "Only this market's creator can claim its pool." });
@@ -1496,7 +1497,7 @@ export function useRedeemAll(): RedeemAllController {
     setScanning(true);
     setError(null);
     try {
-      const signer = guard();
+      const signer = guard("marketCore");
       const holder = signer.publicKey;
       const count = simulated(await marketCore().market_count());
       const result = await discoverRedeemable(holder, count);
@@ -1520,7 +1521,7 @@ export function useRedeemAll(): RedeemAllController {
     if (runningRef.current) return;
     let signer: Signer;
     try {
-      signer = guard();
+      signer = guard("marketCore");
       if (holderRef.current !== signer.publicKey) {
         throw new UserFacingError({ kind: "disconnected", message: "Wait for the connected wallet to finish switching before redeeming." });
       }
@@ -1847,7 +1848,7 @@ export function usePrepareMultisig() {
   const guard = useWriteGuard();
   return useMutation({
     mutationFn: async (input: MultisigPrepareInput): Promise<MultisigSession> => {
-      const coordinator = guard();
+      const coordinator = guard("marketCore");
       const sourceAccount =
         ("sourceAccount" in input && input.sourceAccount) || coordinator.publicKey;
       const requestedTimeout =

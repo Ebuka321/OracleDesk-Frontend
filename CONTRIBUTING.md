@@ -29,19 +29,33 @@ invalid value fails the build with the full list of problems. See
   commit.
 - No force-pushes to shared branches.
 
+### Required checks
+
+Maintainers should protect `develop` with the `Typecheck, lint, test, build` (`frontend`) status check as a required check so broken merges cannot land on `develop`.
+
 ## Checks (CI runs exactly these)
 
+<!-- ci-claims: ignore: node scripts/run-allowed-install-scripts.mjs, node scripts/scan-build-secrets.mjs, npm run perf:lhci -->
+
 ```bash
+npm run check:ci-claims  # CONTRIBUTING.md and docs/architecture.md match .github/workflows/ci.yml
 npm run check:bindings   # generated contract code matches the submodule
 npm run check:env        # .env.example documents every NEXT_PUBLIC_* the code reads
 npm run check:api-errors # API error codes match docs/api.md
 npm run check:sdk        # root SDK, wallet kit range and bindings agree on one major
+node scripts/spec-diff.mjs --base origin/develop # report contract interface changes
 npm run typecheck
 npm run lint
+npm run check:docs
 npm test
+npm run test:scripts
 npm run build
 npm run check:origins    # no unknown third-party origins in the build
 npm run scan:secrets     # no secrets or unlisted NEXT_PUBLIC_* names in the build
+node scripts/check-demo-links.mjs # no production links to retired demo routes
+npm run check:x402       # frontend and x402 service pin the same @x402/* versions
+npx tsc -p e2e/x402      # typecheck the x402 contract test harness
+npm run e2e:x402         # offline x402 contract tests
 ```
 
 ## Dependencies
@@ -124,13 +138,14 @@ real trace service from the submodule (`x402/trace-api.ts`), fully offline: a
 stub facilitator (`e2e/x402/stub-facilitator.ts`) checks the signed payment,
 a fake gateway serves the fixtures in `e2e/x402/fixtures/traces/`, the Soroban
 RPC is answered in-process, and any connection to a non-loopback host fails.
-This is not in CI yet: there is no `x402-contract` job and no `e2e:x402` npm script on `develop`, so the harness has to be run by hand.
+CI runs it as the `x402-contract` job inside an `unshare --net` namespace with
+no external network egress.
 
 ```bash
 npm ci --ignore-scripts --prefix contracts/oracledesk-stellar/x402   # the service's own dependencies
-node scripts/check-x402-versions.mjs       # frontend and service resolve the same @x402/* versions
-npx tsc -p e2e/x402      # typecheck the harness (kept out of the app's tsconfig)
-# no npm script yet: run e2e/x402/x402-contract.e2e.test.ts with Vitest
+npm run check:x402         # frontend and service resolve the same @x402/* versions
+npx tsc -p e2e/x402        # typecheck the harness (kept out of the app's tsconfig)
+npm run e2e:x402           # run the offline x402 contract suite
 ```
 
 When the submodule moves:
