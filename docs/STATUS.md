@@ -125,7 +125,7 @@ The app pins `@stellar/stellar-sdk` to 16.3.1 and `@creit.tech/stellar-wallets-k
 | C6. Suspense build failure | ✅ | Reproduced and fixed (below) |
 | C7. Tests | ✅ | 21 Vitest tests |
 | D. End to end | ✅ read paths | See below |
-| E. Contributor readiness | ✅ files, ⚠️ CI never ran on GitHub | README, CONTRIBUTING, SECURITY, CoC, LICENSE, templates, CI |
+| E. Contributor readiness | ✅ files & CI | README, CONTRIBUTING, SECURITY, CoC, LICENSE, templates, CI (`install`, `frontend`, `x402-contract`, `secrets-canary`, `perf`) |
 | F. Backlog | ✅ | 14 drafts in `docs/wave-issues/` (5 good first issues) |
 
 ## Baseline (before any change)

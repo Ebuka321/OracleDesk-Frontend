@@ -8,6 +8,13 @@ import { Client as ReasoningRegistryClient } from "./generated/reasoning-registr
 import { CONTRACTS, NETWORK_PASSPHRASE, RPC_URL, RPC_URLS } from "./config";
 import { getRpcPool, type RpcPool } from "./rpc-pool";
 import { assertRpcNetwork } from "./rpc-network-guard";
+import {
+  currentScheduleOpts,
+  extractRetryAfterMs,
+  isRateLimitError,
+  scheduler,
+  withRpcPriority,
+} from "./rpc-scheduler";
 
 /** What a wallet provides to sign. Omit it for read-only simulation. */
 export interface Signer {
@@ -19,7 +26,9 @@ export interface Signer {
 
 /** The endpoint pool in the browser; null on the server (prerender, node tests), which uses RPC_URL. */
 export function rpcPool(): RpcPool | null {
-  return getRpcPool(RPC_URLS, NETWORK_PASSPHRASE);
+  return getRpcPool(RPC_URLS, NETWORK_PASSPHRASE, {
+    admit: (u) => !scheduler().isPaused(u, "meta"),
+  });
 }
 
 /** The RPC URL reads should use right now (the pinned one while a write flow holds a lease). */
@@ -39,7 +48,32 @@ export function rpcServer(url: string = currentRpcUrl()): rpc.Server {
         if (typeof value !== "function") return value;
         return (...args: unknown[]) => {
           if (property !== "getNetwork") assertRpcNetwork();
-          return value.apply(target, args);
+          if (typeof window === "undefined" || property === "getNetwork") {
+            return value.apply(target, args);
+          }
+          const opts = currentScheduleOpts();
+          const effectiveOpts =
+            opts.priority === undefined && rpcPool()?.pinnedUrl() === url
+              ? { ...opts, priority: "submit" as const }
+              : opts;
+          return scheduler().run(
+            url,
+            String(property),
+            () =>
+              Promise.resolve(value.apply(target, args)).catch((err: unknown) => {
+                if (isRateLimitError(err)) {
+                  const retryMs = extractRetryAfterMs(err);
+                  rpcPool()?.record(url, {
+                    ms: 0,
+                    ok: false,
+                    status: 429,
+                    retryAfterS: retryMs !== undefined ? Math.ceil(retryMs / 1000) : undefined,
+                  });
+                }
+                throw err;
+              }),
+            effectiveOpts,
+          );
         };
       },
     });
@@ -59,7 +93,7 @@ export async function withPinnedRpc<T>(fn: (rpcUrl: string) => Promise<T>): Prom
   if (!pool) return fn(RPC_URL);
   const lease = pool.pin();
   try {
-    return await fn(lease.url);
+    return await withRpcPriority({ priority: "submit" }, () => fn(lease.url));
   } finally {
     lease.release();
   }

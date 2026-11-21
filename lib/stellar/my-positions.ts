@@ -1,5 +1,6 @@
 import { rpc } from "@stellar/stellar-sdk";
 import { rpcServer } from "./clients";
+import { withRpcPriority } from "./rpc-scheduler";
 import { priceYesBps, settleValue, type Settlement } from "./generated/fpmm";
 import type { Market, Position } from "./generated/market-core";
 import {
@@ -99,7 +100,9 @@ export async function scanHolderPositions(
   const found = new Map<bigint, Position>();
   for (const keyChunk of chunks(ids, LEDGER_ENTRY_CHUNK_SIZE)) {
     const keys = keyChunk.map((id) => ({ id, key: positionLedgerKey(id, holder) }));
-    const response = await server.getLedgerEntries(...keys.map(({ key }) => key));
+    const response = await withRpcPriority({ priority: "background", tag: "positions" }, () =>
+      server.getLedgerEntries(...keys.map(({ key }) => key)),
+    );
     const idByKey = new Map(keys.map(({ id, key }) => [key.toXDR("base64"), id]));
     for (const entry of response.entries) {
       const id = idByKey.get(entry.key.toXDR("base64"));
@@ -116,7 +119,9 @@ export async function scanHolderPositions(
   const holdingIds = [...found.keys()];
   for (const keyChunk of chunks(holdingIds, LEDGER_ENTRY_CHUNK_SIZE)) {
     const keys = keyChunk.map((id) => ({ id, key: marketLedgerKey(id) }));
-    const response = await server.getLedgerEntries(...keys.map(({ key }) => key));
+    const response = await withRpcPriority({ priority: "background", tag: "positions" }, () =>
+      server.getLedgerEntries(...keys.map(({ key }) => key)),
+    );
     latestLedger = Math.max(latestLedger, response.latestLedger);
     const idByKey = new Map(keys.map(({ id, key }) => [key.toXDR("base64"), id]));
     for (const entry of response.entries) {

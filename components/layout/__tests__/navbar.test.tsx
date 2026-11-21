@@ -1,8 +1,32 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import React from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import Navbar from "../Navbar";
-import { NAV_ITEMS, isActive, activeHref } from "../nav-items";
+import { ViewedAddressProvider } from "@/lib/hooks/useViewedAddress";
+
+vi.mock("@/lib/api/client", () => ({
+  notifyAuthInvalid: () => false,
+  onAuthSessionChanged: () => () => {},
+  onAuthInvalid: () => () => {},
+  apiGet: vi.fn(),
+  apiPost: vi.fn(),
+  apiPatch: vi.fn(),
+  apiFetch: vi.fn(),
+  apiPath: (...p: string[]) => p.join("/"),
+  API_URL: "http://localhost:8787/api/v1",
+  ApiError: class ApiError extends Error {},
+}));
+
+vi.mock("@/lib/admin/useAdminPermissions", () => ({
+  useAdminPermissions: () => ({
+    isAdmin: true,
+    isAuthenticated: true,
+    roles: ["admin"],
+    can: () => true,
+    canAccess: () => true,
+  }),
+}));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/markets",
@@ -18,21 +42,11 @@ vi.mock("../HealthIndicator", () => ({
 }));
 
 vi.mock("@/lib/contexts/WalletContext", () => ({
+  useWallet: () => ({ address: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7", isConnected: true }),
   useWalletAddress: () => ({ address: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7", isConnected: true }),
   useWalletNetwork: () => ({ isWrongNetwork: false }),
   useWalletSession: () => ({ isConnecting: false, error: null }),
   useWalletActions: () => ({ openModal: vi.fn(), disconnect: vi.fn() }),
-}));
-
-vi.mock("@/lib/hooks/useViewedAddress", () => ({
-  useViewedAddress: () => ({
-    viewed: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7",
-    source: "connected",
-    isWatching: false,
-    watchError: null,
-    setWatch: () => true,
-    clearWatch: () => {},
-  }),
 }));
 
 vi.mock("@/lib/hooks/useStellar", () => ({
@@ -44,9 +58,20 @@ vi.mock("@/lib/hooks/useStellar", () => ({
   useUsdcBalanceState: () => ({ data: undefined }),
 }));
 
+function renderNavbar() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <ViewedAddressProvider>
+        <Navbar />
+      </ViewedAddressProvider>
+    </QueryClientProvider>,
+  );
+}
+
 describe("Navbar & Navigation", () => {
   it("renders brand logo and nav items", () => {
-    render(<Navbar />);
+    renderNavbar();
     expect(screen.getByText("OracleDesk")).toBeDefined();
     expect(screen.getByRole("button", { name: "Open navigation menu" })).toBeDefined();
     expect(screen.getByRole("button", { name: /Markets/i })).toBeDefined();
@@ -57,13 +82,13 @@ describe("Navbar & Navigation", () => {
   });
 
   it("has accessible notifications button with label", () => {
-    render(<Navbar />);
+    renderNavbar();
     const notificationsLink = screen.getByRole("link", { name: "Notifications" });
     expect(notificationsLink).toBeDefined();
   });
 
   it("opens mobile navigation drawer on hamburger click", async () => {
-    render(<Navbar />);
+    renderNavbar();
     const hamburger = screen.getByRole("button", { name: "Open navigation menu" });
     fireEvent.click(hamburger);
 

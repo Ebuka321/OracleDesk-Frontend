@@ -50,6 +50,27 @@ const WalletDropdownBody = () => {
   }
 
   if (!isConnected || !address) {
+    if (isWatching && viewed) {
+      return (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => clearWatch()}
+            className="px-3 py-2 rounded-lg border border-outline-variant bg-surface-container-low text-xs font-bold text-on-surface hover:bg-surface-container transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+          >
+            Stop watching
+          </button>
+          <button
+            onClick={() => openModal()}
+            disabled={isConnecting}
+            title={error ?? undefined}
+            className="bg-primary text-primary-foreground px-4 py-2 rounded-lg font-label-caps text-label-caps uppercase tracking-wider hover:opacity-90 transition-all active:scale-95 disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+          >
+            {isConnecting ? "Connecting…" : "Connect Wallet"}
+          </button>
+        </div>
+      );
+    }
     return (
       <button
         onClick={() => openModal()}

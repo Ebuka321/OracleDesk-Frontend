@@ -28,12 +28,8 @@ export interface ViewedAddressContextValue {
   isWatching: boolean;
   /** If the address in URL or input is invalid, stores the user-facing explanation. */
   watchError: string | null;
-  /** An external `?watch=` address awaiting explicit user confirmation. */
-  pendingWatch: ViewedAddress | null;
-  /** Accepts `pendingWatch` and switches to it. */
-  confirmPendingWatch: () => void;
-  /** Dismisses `pendingWatch` and removes `?watch=` from the URL. */
-  dismissPendingWatch: () => void;
+  /** True once client-side URL/sessionStorage watch state has been resolved. */
+  hydrated: boolean;
   /** Sets a new watched address, validating format and updating URL & sessionStorage. */
   setWatch: (address: string, opts?: { internal?: boolean }) => boolean;
   /** Clears the active watch, clearing sessionStorage, URL param, and relevant query caches. */
@@ -61,51 +57,11 @@ export function ViewedAddressProvider({ children }: { children: ReactNode }) {
   const { address: connectedAddress } = useWalletAddress();
   const queryClient = useQueryClient();
 
-  const [watchedAddress, setWatchedAddress] = useState<ViewedAddress | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const saved = window.sessionStorage.getItem(SESSION_WATCH_KEY);
-      if (saved) {
-        const val = validateWatchAddress(saved);
-        if (val.ok) return val.address;
-      }
-    } catch {
-      // Ignore sessionStorage / SSR errors
-    }
-    return null;
-  });
+  const [watchedAddress, setWatchedAddress] = useState<ViewedAddress | null>(null);
+  const [watchError, setWatchError] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
-  const [pendingWatch, setPendingWatch] = useState<ViewedAddress | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const urlParam = new URLSearchParams(window.location.search).get("watch");
-      if (!urlParam) return null;
-      const saved = window.sessionStorage.getItem(SESSION_WATCH_KEY);
-      const val = validateWatchAddress(urlParam);
-      if (val.ok && val.address !== saved) {
-        return val.address;
-      }
-    } catch {
-      // Ignore SSR errors
-    }
-    return null;
-  });
-
-  const [watchError, setWatchError] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const urlParam = new URLSearchParams(window.location.search).get("watch");
-      if (urlParam) {
-        const val = validateWatchAddress(urlParam);
-        if (!val.ok) return val.error;
-      }
-    } catch {
-      // Ignore SSR errors
-    }
-    return null;
-  });
-
-  // Sync with URL search params on mount or when popstate fires
+  // Sync with URL search params / sessionStorage on mount or when popstate fires
   useEffect(() => {
     const syncFromUrl = () => {
       try {
@@ -126,10 +82,23 @@ export function ViewedAddressProvider({ children }: { children: ReactNode }) {
             setPendingWatch(null);
             setWatchError(val.error);
           }
+        } else {
+          const sessionParam = window.sessionStorage.getItem(SESSION_WATCH_KEY);
+          if (sessionParam) {
+            const val = validateWatchAddress(sessionParam);
+            if (val.ok) {
+              setWatchedAddress(val.address);
+              setWatchError(null);
+            } else {
+              setWatchedAddress(null);
+              window.sessionStorage.removeItem(SESSION_WATCH_KEY);
+            }
+          }
         }
       } catch {
         // Ignore
       }
+      setHydrated(true);
     };
 
     syncFromUrl();
@@ -219,9 +188,7 @@ export function ViewedAddressProvider({ children }: { children: ReactNode }) {
         source: isSelf ? "connected" : "watch",
         isWatching: !isSelf,
         watchError,
-        pendingWatch,
-        confirmPendingWatch,
-        dismissPendingWatch,
+        hydrated,
         setWatch,
         clearWatch,
       };
@@ -233,9 +200,7 @@ export function ViewedAddressProvider({ children }: { children: ReactNode }) {
         source: "connected",
         isWatching: false,
         watchError,
-        pendingWatch,
-        confirmPendingWatch,
-        dismissPendingWatch,
+        hydrated,
         setWatch,
         clearWatch,
       };
@@ -246,22 +211,11 @@ export function ViewedAddressProvider({ children }: { children: ReactNode }) {
       source: null,
       isWatching: false,
       watchError,
-      pendingWatch,
-      confirmPendingWatch,
-      dismissPendingWatch,
+      hydrated,
       setWatch,
       clearWatch,
     };
-  }, [
-    watchedAddress,
-    connectedViewed,
-    watchError,
-    pendingWatch,
-    confirmPendingWatch,
-    dismissPendingWatch,
-    setWatch,
-    clearWatch,
-  ]);
+  }, [watchedAddress, connectedViewed, watchError, hydrated, setWatch, clearWatch]);
 
   return (
     <ViewedAddressContext.Provider value={contextValue}>

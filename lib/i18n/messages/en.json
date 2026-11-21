@@ -10,6 +10,7 @@
       "no-trustline": "Your account has no USDC trustline. Add the USDC asset in your wallet first.",
       "contract": "The contract rejected this.",
       "wrong-network": "Switch your wallet to {network} and try again.",
+      "watch-only": "You're viewing another address in watch-only mode. Connect your own wallet to trade.",
       "disconnected": "Your wallet has no signer for this account. Reconnect it and try again.",
       "network": "Couldn't reach the Stellar network. Check your connection and try again.",
       "submission": "Transaction was rejected by the network. Please try again.",

@@ -15,8 +15,8 @@ import { IntegrityBanner } from "@/components/layout/IntegrityBanner";
 import { BuildIdentityBanner } from "@/components/layout/BuildIdentityBanner";
 import { CopyTradeReconciler } from "@/components/copy-trade/CopyTradeReconciler";
 import { ViewedAddressProvider } from "@/lib/hooks/useViewedAddress";
-import { DirectionProvider } from "@/components/layout/DirectionProvider";
-import { dirForLocale, type Dir } from "@/lib/i18n/direction";
+import { IntegrityBanner } from "@/components/layout/IntegrityBanner";
+import { ViewingBanner } from "@/components/layout/ViewingBanner";
 import { WebVitals } from "@/app/web-vitals";
 import { ErrorReportingInit } from "@/components/observability/ErrorReportingInit";
 import { ConsentBanner } from "@/components/consent-banner";
@@ -86,7 +86,10 @@ export default function RootLayout({
               <HealthProvider>
                 <InboxProvider>
                   <Navbar />
-                  <IntegrityBanner />
+                  <div className="sticky top-0 z-50 flex flex-col">
+                    <IntegrityBanner />
+                    <ViewingBanner />
+                  </div>
                   <NetworkConsistencyBanner />
                   <RpcDegradedBanner />
                   <div id="main-content" tabIndex={-1} className="flex-1 flex flex-col outline-none">

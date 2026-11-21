@@ -1,5 +1,6 @@
 import { xdr, type rpc } from "@stellar/stellar-sdk";
 import { marketCore, rpcServer, type OutcomeTag } from "./clients";
+import { withRpcPriority } from "./rpc-scheduler";
 import { CONTRACTS, RPC_URL } from "./config";
 import { priceYesBps } from "./generated/fpmm";
 
@@ -127,7 +128,9 @@ export async function fetchEventRange(server: EventServer, topics: string[][], s
   const limit = 1000;
   while (true) {
     signal?.throwIfAborted();
-    const page = await server.getEvents(cursor ? { filters, cursor, limit } : { filters, startLedger: start, endLedger: end, limit });
+    const page = await withRpcPriority({ priority: "background", tag: "events" }, () =>
+      server.getEvents(cursor ? { filters, cursor, limit } : { filters, startLedger: start, endLedger: end, limit }),
+    );
     signal?.throwIfAborted();
     events.push(...page.events.filter(event => event.ledger >= start && event.ledger < end));
     if (events.length > maxEvents) events.splice(0, events.length - maxEvents);
@@ -284,9 +287,11 @@ export async function fetchContractEvents(options: ReadContractEventsOptions): P
 
   while (start < end && pages < maxPages) {
     options.signal?.throwIfAborted();
-    const page = cursor
-      ? await server.getEvents({ filters, cursor, limit })
-      : await server.getEvents({ filters, startLedger: start, endLedger: end, limit });
+    const page = await withRpcPriority({ priority: "background", tag: "events" }, () =>
+      cursor
+        ? server.getEvents({ filters, cursor, limit })
+        : server.getEvents({ filters, startLedger: start, endLedger: end, limit }),
+    );
     options.signal?.throwIfAborted();
     pages += 1;
 
