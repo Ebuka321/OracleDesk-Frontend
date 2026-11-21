@@ -29,19 +29,33 @@ invalid value fails the build with the full list of problems. See
   commit.
 - No force-pushes to shared branches.
 
+### Required checks
+
+Maintainers should protect `develop` with the `Typecheck, lint, test, build` (`frontend`) status check as a required check so broken merges cannot land on `develop`.
+
 ## Checks (CI runs exactly these)
 
+<!-- ci-claims: ignore: node scripts/run-allowed-install-scripts.mjs, node scripts/scan-build-secrets.mjs, npm run perf:lhci -->
+
 ```bash
+npm run check:ci-claims  # CONTRIBUTING.md and docs/architecture.md match .github/workflows/ci.yml
 npm run check:bindings   # generated contract code matches the submodule
 npm run check:env        # .env.example documents every NEXT_PUBLIC_* the code reads
 npm run check:api-errors # API error codes match docs/api.md
 npm run check:sdk        # root SDK, wallet kit range and bindings agree on one major
+node scripts/spec-diff.mjs --base origin/develop # report contract interface changes
 npm run typecheck
 npm run lint
+npm run check:docs
 npm test
+npm run test:scripts
 npm run build
 npm run check:origins    # no unknown third-party origins in the build
 npm run scan:secrets     # no secrets or unlisted NEXT_PUBLIC_* names in the build
+node scripts/check-demo-links.mjs # no production links to retired demo routes
+npm run check:x402       # frontend and x402 service pin the same @x402/* versions
+npx tsc -p e2e/x402      # typecheck the x402 contract test harness
+npm run e2e:x402         # offline x402 contract tests
 ```
 
 ## Dependencies
@@ -124,22 +138,23 @@ real trace service from the submodule (`x402/trace-api.ts`), fully offline: a
 stub facilitator (`e2e/x402/stub-facilitator.ts`) checks the signed payment,
 a fake gateway serves the fixtures in `e2e/x402/fixtures/traces/`, the Soroban
 RPC is answered in-process, and any connection to a non-loopback host fails.
-CI runs it as the `x402-contract` job.
+CI runs it as the `x402-contract` job inside an `unshare --net` namespace with
+no external network egress.
 
 ```bash
 npm ci --ignore-scripts --prefix contracts/oracledesk-stellar/x402   # the service's own dependencies
-npm run check:x402       # frontend and service resolve the same @x402/* versions
-npx tsc -p e2e/x402      # typecheck the harness (kept out of the app's tsconfig)
-npm run e2e:x402
+npm run check:x402         # frontend and service resolve the same @x402/* versions
+npx tsc -p e2e/x402        # typecheck the harness (kept out of the app's tsconfig)
+npm run e2e:x402           # run the offline x402 contract suite
 ```
 
 When the submodule moves:
 
-1. Run `npm ci --ignore-scripts --prefix contracts/oracledesk-stellar/x402`, then `npm run check:x402`. If the service now resolves
+1. Run `npm ci --ignore-scripts --prefix contracts/oracledesk-stellar/x402`, then `node scripts/check-x402-versions.mjs`. If the service now resolves
    different `@x402/*` versions, pin the frontend to exactly those
    (`npm install --save-exact @x402/core@<v> @x402/stellar@<v>`) and read
    the release notes for header, payload or settlement-flow changes.
-2. Run `npm run e2e:x402`. "contracts/x402 API changed: update
+2. Run the `e2e/x402` harness (see above). "contracts/x402 API changed: update
    e2e/x402/harness.ts and the frontend client" means `createTraceApi` or
    `MapTraceRepository` moved or changed shape: adapt `e2e/x402/harness.ts`,
    then `lib/x402/client.ts` if the wire format changed.
@@ -200,6 +215,10 @@ filed.
 - Amounts as `bigint` in 7-decimal USDC base units
   (`lib/stellar/units.ts`), never floats, for anything that reaches a
   transaction.
+- Any code that persists to `localStorage`, IndexedDB, or polls across tabs
+  must follow the cross-tab coordination rules in
+  [docs/testing.md](docs/testing.md#multi-tab-coordination-harness-libtestingmulti-tab)
+  and add a multi-tab race scenario using `lib/testing/multi-tab/`.
 
 ## Number and money formatting
 
@@ -257,7 +276,7 @@ When the contracts repository changes:
    ```
 2. Run the interface change report:
    ```bash
-   npm run spec:diff
+   node scripts/spec-diff.mjs
    ```
    This decodes embedded contract specifications from both the base branch and the new bindings, producing a structured diff of functions, types, error codes, and events.
 
@@ -279,5 +298,13 @@ All errors in OracleDesk use a stable, typed taxonomy with localized messages in
   4. Run `npm run check:api-errors` and `npm test` to ensure CI checks pass.
 - **Client/Wallet errors**: Defined in `DESCRIBED_ERROR_KINDS` in `lib/errors/codes.ts` with catalog entries under `errors.kind.*`.
 - **Displaying in UI**: Always render errors via `userMessage(err)` from `lib/errors/display.ts` instead of raw `err.message`.
+
+## Right-to-left (RTL) layout
+
+- **Logical Tailwind utilities**: Always use logical properties (`ms-*`, `me-*`, `ps-*`, `pe-*`, `start-*`, `end-*`, `text-start`, `text-end`, `rounded-s-*`, `rounded-e-*`, `border-s`, `border-e`) in `app/` and `components/`. ESLint rejects physical `ml-/mr-/pl-/pr-/left-/right-/text-left/text-right` utilities unless annotated with `// rtl-physical-ok`.
+- **Symmetric centering**: `left-1/2 -translate-x-1/2` is symmetric and may remain physical.
+- **Bidi isolation (`<Ltr>`)**: Wrap Stellar G-addresses, C-contract IDs, transaction hashes, IPFS CIDs, on-chain IDs (`#12`), and amount+unit pairs (`1,234.50 USDC`) in `<Ltr>` (`components/ui/ltr.tsx`) so the bidi algorithm cannot reorder characters in RTL locales.
+- **Icon mirroring**: Pass `mirror` to `<Icon>` for navigation-direction icons (`chevron_right`, `arrow_forward`, `arrow_back`). Do **not** mirror value/flow-semantics icons (`trending_up`, `trending_down`, `north_east`, `south_west`).
+
 
 

@@ -13,10 +13,13 @@ export function deadlineFor(
   kind: WriteKind,
   ledgerNow: number | null,
   closeTime?: bigint,
+  requestedTimeoutSeconds: number = DEFAULT_TX_TIMEOUT_S,
 ): TransactionDeadline {
   if (ledgerNow === null || !Number.isFinite(ledgerNow) || ledgerNow < 0) {
     throw new Error("Stellar ledger time is unavailable.");
   }
+
+  const desiredTimeout = Math.max(MIN_TX_TIMEOUT_S, Math.floor(requestedTimeoutSeconds));
 
   if ((kind === "buy" || kind === "sell") && closeTime !== undefined) {
     const now = Math.floor(ledgerNow);
@@ -25,12 +28,12 @@ export function deadlineFor(
     if (remaining < BigInt(MIN_TX_TIMEOUT_S)) {
       throw new Error("This market closes in under 25 seconds, too soon to safely place a trade.");
     }
-    const timeoutInSeconds = Math.min(DEFAULT_TX_TIMEOUT_S, Number(remaining));
+    const timeoutInSeconds = Math.min(desiredTimeout, Number(remaining));
     return { timeoutInSeconds, maxTime: now + timeoutInSeconds };
   }
 
   const now = Math.floor(ledgerNow);
-  return { timeoutInSeconds: DEFAULT_TX_TIMEOUT_S, maxTime: now + DEFAULT_TX_TIMEOUT_S };
+  return { timeoutInSeconds: desiredTimeout, maxTime: now + desiredTimeout };
 }
 
 export function assertSigningDeadline(deadline: TransactionDeadline, ledgerNow: number | null): void {

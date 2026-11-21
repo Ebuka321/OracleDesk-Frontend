@@ -1,5 +1,6 @@
 import { apiClient, apiPath, type ApiRequestOptions } from "./client";
 import { assertValid, parseTxHash, parseUuid } from "@/lib/validation/ids";
+import { CopyTradeInitSchema } from "./schemas";
 
 /** What the wallet must sign to copy a trace: market_core.buy. */
 export interface CopyTradePayload {
@@ -35,7 +36,7 @@ export async function initiateCopyTrade(params: InitiateCopyTradeParams, options
     copyTradeId: string;
     transactionPayload: CopyTradePayload;
     instructions: string;
-  }>("/trade/copy", params, undefined, options);
+  }>("/trade/copy", params, { "Idempotency-Key": crypto.randomUUID() }, { ...options, schema: CopyTradeInitSchema });
 
   return data;
 }
@@ -43,9 +44,11 @@ export async function initiateCopyTrade(params: InitiateCopyTradeParams, options
 export async function confirmCopyTrade(id: string, txHash: string, options?: ApiRequestOptions) {
   const copyTradeId = assertValid(parseUuid(id), "copy trade id");
   const hash = assertValid(parseTxHash(txHash), "transaction hash");
+  // Deterministic idempotency key so duplicate confirms across tabs or retries are harmless.
+  const idempotencyKey = `copy-confirm:${copyTradeId}:${hash.toLowerCase()}`;
   const { data } = await apiClient.patch<CopyTradeRecord>(apiPath`/trade/copy/${copyTradeId}/confirm`, {
     txHash: hash,
-  }, options);
+  }, { "Idempotency-Key": idempotencyKey }, options);
 
   return data;
 }

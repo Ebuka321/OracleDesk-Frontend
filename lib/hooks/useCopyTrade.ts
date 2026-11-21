@@ -13,8 +13,8 @@ import { track } from "@/lib/observability/analytics";
 import type { Outcome } from "@/lib/observability/analytics-events";
 import { useBuy, type BuyParams, type PreparedBuy } from "./useStellar";
 import {
-  emptyOutbox, isTerminal, MAX_OUTBOX_ENTRIES, readOutbox, reconcileEntry, refreshOutbox,
-  subscribeOutbox, updateOutbox, writeOutbox, type OutboxEntry,
+  appendOutboxEntry, emptyOutbox, isTerminal, MAX_OUTBOX_ENTRIES, readOutbox, reconcileOutboxEntryCrossTab, refreshOutbox,
+  subscribeOutbox, updateOutbox, type OutboxEntry,
 } from "@/lib/copy-trade/outbox";
 
 export { verifyCopyBuy } from "@/lib/copy-trade/outbox";
@@ -63,12 +63,10 @@ export function useCopyTradeReconciler() {
         const ticket = store?.capture(scope);
         try {
           ticket?.assertCurrent();
-          const resume = entry.needsSession && scope.sessionId && entry.pausedSessionId !== scope.sessionId;
-          if (entry.txHash && !entry.needsSession && entry.nextAttemptAt <= Date.now()) {
-            updateOutbox(address, entry.copyTradeId, { state: "confirming" });
-          }
-          const next = await reconcileEntry(resume ? { ...entry, nextAttemptAt: 0 } : entry, address, {
-            now: Date.now, sessionId: scope.sessionId, check: checkTransaction,
+          await reconcileOutboxEntryCrossTab(address, entry.copyTradeId, {
+            now: Date.now,
+            sessionId: scope.sessionId,
+            check: checkTransaction,
             confirm: async (copyTradeId, hash) => {
               const confirmed = await confirmCopyTrade(copyTradeId, hash, { expectScope: scope, signal: ticket?.signal });
               // Issue #125: the backend recorded it — the one completion event
@@ -80,12 +78,6 @@ export function useCopyTradeReconciler() {
             },
             assertCurrent: () => { ticket?.assertCurrent(); },
           });
-          // Updating address A's outbox is safe even if B connected while the
-          // request failed. Never write to the connected account's key here.
-          if (next !== entry) {
-            const latest = readOutbox(address).find((e) => e.copyTradeId === entry.copyTradeId);
-            if (latest && !latest.dismissed && latest.txHash === entry.txHash) updateOutbox(address, entry.copyTradeId, next);
-          }
         } catch (error) {
           // Cancelled scope: the next connection owns the next attempt.
           // Everything else (recording/confirmation failures, unreachable
@@ -142,7 +134,13 @@ export function useCopyTrade() {
           state: "initiated", txHash: null, attempts: 0, nextAttemptAt: 0, createdAt: Date.now(),
         };
         copyTradeId = entry.copyTradeId;
-        const durable = writeOutbox(trader, [...readOutbox(trader), entry]);
+        // Issue #228: gate on durable storage before signing; also refuse if outbox write failed
+        const { assertDurableStorage } = await import("@/lib/storage/quota");
+        await assertDurableStorage("copy-trade");
+        const durable = appendOutboxEntry(trader, entry);
+        if (!durable) {
+          throw new Error("Storage unavailable: could not record this trade. Clear browser data or try again.");
+        }
         // Never sign a changed backend payload without another explicit review.
         if (payload.userWallet !== trader || payload.contractId !== CONTRACTS.marketCore ||
             payload.onChainMarketId !== String(input.marketId) || payload.outcome !== input.outcome || payload.collateralInRaw !== input.collateralIn.toString()) {

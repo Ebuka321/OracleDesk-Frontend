@@ -1,8 +1,11 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { createPortal } from "react-dom";
-import { MultisigReview } from "@/components/multisig-review";
+// Issue #229: lazy-load multisig review — only needed for multisig wallets
+import dynamic from "next/dynamic";
+const MultisigReview = dynamic(() => import("@/components/multisig-review").then((m) => ({ default: m.MultisigReview })), { ssr: false, loading: () => null });
 import { PendingValue } from "@/components/pending-value";
 import { SourceTag } from "@/components/ui/source-tag";
 import { TxReview, shouldSkipTxReview } from "@/components/tx-review";
@@ -391,6 +394,12 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
                   : quote.data !== undefined
               ? `≈ ${formatUsdc(quote.data, { maxDecimals: 2 })} shares, at least ${formatUsdc(minOut(quote.data, slippageBps), { maxDecimals: 2 })} (${bpsToPercent(slippageBps)} slippage)`
               : quote.error ? userMessage(quote.error) : quote.isFetching ? "Quoting…" : ""}
+          <Link
+            href={`/learn/fpmm?market=${encodeURIComponent(String(onChainMarketId ?? ""))}&side=${encodeURIComponent(side)}&amount=${encodeURIComponent(String(amountRaw ?? ""))}&slippage=${encodeURIComponent(String(slippageBps))}`}
+            className="text-[10px] text-primary hover:underline ms-2 inline-flex items-center"
+          >
+            How is this calculated?
+          </Link>
         </span>
         {balance.data !== undefined && <span>Balance {formatUsdc(balance.data, { maxDecimals: 2, grouping: true })}<PendingValue state={balanceState.data} /></span>}
       </div>

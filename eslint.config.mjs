@@ -22,6 +22,47 @@ const typedCallRestriction = {
 const moneyFormatMessage =
   "Format money with lib/format/money.ts. If this is not money, rename the variable or add // eslint-disable-next-line no-restricted-syntax -- not money: <reason>";
 
+const PHYSICAL_TW_RE = /\b(?:ml|mr|pl|pr|left|right)-\d|\btext-(?:left|right)\b/;
+
+const rtlPlugin = {
+  rules: {
+    "no-physical-classes": {
+      meta: { type: "problem", schema: [] },
+      create(context) {
+        const sourceCode = context.sourceCode;
+        const checkText = (node, text) => {
+          if (!PHYSICAL_TW_RE.test(text)) return;
+          const comments = [
+            ...sourceCode.getCommentsBefore(node),
+            ...sourceCode.getCommentsAfter(node),
+          ];
+          const line = node.loc?.start.line;
+          const lineText = line ? sourceCode.lines[line - 1] ?? "" : "";
+          if (
+            lineText.includes("rtl-physical-ok") ||
+            comments.some((c) => c.value.includes("rtl-physical-ok"))
+          ) {
+            return;
+          }
+          context.report({
+            node,
+            message:
+              "Use logical Tailwind utilities (ms-, me-, ps-, pe-, start-, end-, text-start, text-end) instead of physical directions. Annotate justified exceptions with // rtl-physical-ok.",
+          });
+        };
+        return {
+          Literal(node) {
+            if (typeof node.value === "string") checkText(node, node.value);
+          },
+          TemplateElement(node) {
+            checkText(node, node.value.raw);
+          },
+        };
+      },
+    },
+  },
+};
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -98,7 +139,21 @@ const eslintConfig = defineConfig([
             'TemplateLiteral:has(TemplateElement[value.raw=/\\$\\s*$/]) > CallExpression[callee.property.name="toFixed"]',
           message: moneyFormatMessage,
         },
+        {
+          selector:
+            'CallExpression[callee.object.name="StrKey"][callee.property.name="isValidEd25519PublicKey"]',
+          message: "Use <AddressInput> (components/ui/address-input.tsx) instead of raw StrKey.isValidEd25519PublicKey in app/.",
+        },
       ],
+    },
+  },
+  {
+    files: ["app/**/*.tsx", "components/**/*.tsx"],
+    plugins: {
+      "rtl-logical": rtlPlugin,
+    },
+    rules: {
+      "rtl-logical/no-physical-classes": "error",
     },
   },
 ]);

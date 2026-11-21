@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { calcSell } from "../generated/fpmm";
-import { reconcileWithQuote, solveSellForShares } from "../sell-solver";
+import { exactSellForShares, reconcileWithQuote, solveSellForShares } from "../sell-solver";
 
 describe("solveSellForShares", () => {
   it("returns the maximal collateral output allowed by a share budget", () => {
@@ -73,5 +73,35 @@ describe("solveSellForShares", () => {
     if ("error" in local) return;
     const reconciled = await reconcileWithQuote(local, async () => local.sharesIn);
     expect(reconciled).toEqual(local);
+  });
+});
+
+describe("exactSellForShares", () => {
+  it("burns exactly the shares, keeps the invariant and never pays more than the legacy solver", () => {
+    let seed = 0x5e11;
+    const random = (max: number) => {
+      seed = (seed * 1_664_525 + 1_013_904_223) >>> 0;
+      return seed % max;
+    };
+    for (let i = 0; i < 2_000; i++) {
+      const rSold = BigInt(random(100_000) + 1);
+      const rOther = BigInt(random(100_000) + 2);
+      const fee = BigInt([0, 30, 100, 1_000][random(4)]);
+      const shares = BigInt(random(200_000) + 1);
+      const exact = exactSellForShares(rSold, rOther, shares, fee);
+      if ("error" in exact) continue;
+      expect(exact.sharesIn).toBe(shares);
+      expect((rSold + shares - exact.gross) * (rOther - exact.gross)).toBeGreaterThanOrEqual(rSold * rOther);
+      expect(calcSell(rSold, rOther, exact.collateralOut, fee).sharesIn).toBeLessThanOrEqual(shares);
+      const legacy = solveSellForShares(rSold, rOther, shares, fee);
+      expect("error" in legacy).toBe(false);
+      if (!("error" in legacy)) expect(legacy.collateralOut).toBeGreaterThanOrEqual(exact.collateralOut);
+    }
+  });
+
+  it("maps tiny and illiquid sells to solver errors", () => {
+    expect(exactSellForShares(1_000n, 1_000n, 1n, 1_000n)).toEqual({ error: "too-small" });
+    expect(exactSellForShares(1_000n, 1_000n, 0n, 0n)).toEqual({ error: "too-small" });
+    expect(exactSellForShares(1_000n, 1_000n, 10n, 10_000n)).toEqual({ error: "insufficient-liquidity" });
   });
 });

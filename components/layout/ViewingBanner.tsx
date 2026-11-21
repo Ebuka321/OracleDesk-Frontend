@@ -7,14 +7,18 @@ import { shortAddress } from "@/lib/stellar/units";
 import { Eye, ExternalLink, X, AlertCircle } from "lucide-react";
 
 export function ViewingBanner() {
-  const { viewed, isWatching, watchError, clearWatch } = useViewedAddress();
+  const { viewed, isWatching, watchError, clearWatch, hydrated } = useViewedAddress();
+
+  if (!hydrated) {
+    return null;
+  }
 
   if (watchError) {
     return (
       <div
         role="alert"
         aria-live="assertive"
-        className="w-full bg-amber-500/15 border-b border-amber-500/30 text-amber-900 px-4 py-2.5 text-xs z-50 sticky top-0 backdrop-blur-md"
+        className="w-full bg-amber-500/15 border-b border-amber-500/30 text-amber-900 px-4 py-2.5 text-xs backdrop-blur-md"
       >
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -43,7 +47,7 @@ export function ViewingBanner() {
     <div
       role="status"
       aria-live="polite"
-      className="w-full bg-primary/10 border-b border-primary/30 text-on-surface px-4 py-2.5 text-xs z-50 sticky top-0 backdrop-blur-md"
+      className="w-full bg-primary/10 border-b border-primary/30 text-on-surface px-4 py-2.5 text-xs backdrop-blur-md"
     >
       <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
         <div className="flex items-center gap-2">

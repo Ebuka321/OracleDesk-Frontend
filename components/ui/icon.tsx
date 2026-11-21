@@ -167,6 +167,12 @@ export interface IconProps extends Omit<SVGProps<SVGSVGElement>, "name"> {
   name: IconName;
   label?: string;
   filled?: boolean;
+  /**
+   * Mirror horizontally in RTL (`rtl:-scale-x-100`).
+   * Use for navigation-direction icons (`chevron_right`, `arrow_forward`, `arrow_back`).
+   * Do NOT use for value/flow-semantics icons (`trending_up`, `trending_down`, `north_east`, `south_west`).
+   */
+  mirror?: boolean;
   className?: string;
 }
 
@@ -174,6 +180,7 @@ export function Icon({
   name,
   label,
   filled,
+  mirror,
   className,
   ...rest
 }: IconProps) {
@@ -187,7 +194,7 @@ export function Icon({
       aria-label={label}
       role={label ? "img" : undefined}
       focusable="false"
-      className={cn("inline-block shrink-0 size-[1em]", className)}
+      className={cn("inline-block shrink-0 size-[1em]", mirror && "rtl:-scale-x-100", className)}
       fill={filled ? "currentColor" : "none"}
       {...rest}
     />

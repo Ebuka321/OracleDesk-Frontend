@@ -36,3 +36,18 @@ When a property fails, `fast-check` shrinks the failure and outputs a JSON summa
 ```bash
 stellar contract invoke --id $MARKET_CORE --network localnet -- quote_sell --market_id <id> --outcome '"Yes"' --collateral_out <collateralOut>
 ```
+
+## Multi-Tab Coordination Harness (`lib/testing/multi-tab/`)
+
+`lib/testing/multi-tab/` simulates N browser tabs in a single Vitest process to deterministically reproduce cross-tab races without real sleeping:
+
+- **Per-tab isolation**: each `SimulatedTab` has its own `sessionStorage`, `document.visibilityState`, `window` listeners, and isolated module instances (`tab.importModule(...)` via `vi.resetModules()`).
+- **Shared browser state**: all tabs share one `localStorage`, one `fake-indexeddb` `IDBFactory`, one hand-written `FakeLockManager` (Web Locks with `exclusive`/`shared` modes, FIFO queueing, `AbortSignal`, `ifAvailable`, and per-tab disable/crash), and controllable `FakeBroadcastBus` + `FakeStorageBus` (delay, reorder, drop, targeted delivery).
+- **Fake clocks**: uses `vi.useFakeTimers()` so lease expiry, settle windows, and backoff are deterministic.
+
+### Cross-Tab Coordination Rules
+
+1. **Copy-trade outbox (`lib/copy-trade/outbox.ts`)**: every write re-reads fresh from `localStorage` (`mutateOutbox` / `updateOutbox` / `appendOutboxEntry`); the in-memory `Map` is strictly a read optimisation for `useSyncExternalStore`. Reconciliation acquires a single-tab claim (`withCopyTradeReconcileClaim`: Web Locks `ifAvailable`, or hardened `localStorage` lease fallback) and `confirmCopyTrade` uses a deterministic `Idempotency-Key`. Residual race: across separate OS browser processes without Web Locks, synchronous `localStorage` get/set is not atomic at the OS level.
+2. **x402 trace lock (`lib/x402/recovery.ts`)**: `withTraceLock` uses Web Locks when available, otherwise acquires an atomic claim record in IndexedDB (`claims` store, single `readwrite` transaction, `TRACE_CLAIM_TTL_MS = 30s` crashed-tab expiry). If neither Web Locks nor IndexedDB is available, it fails closed (`TraceLockUnavailableError`) and never signs unprotected.
+3. **Transaction tracker (`lib/stellar/tx-tracker.tsx` & `tx-tracker-core.ts`)**: pending records are stored in owner-scoped `localStorage` (`oracledesk_pending_txs:<holder>`) so newly opened tabs see pending transactions even after the submitting tab closes, while preventing cross-account leaks. Polling uses `withTxPollClaim` (one poller per hash; followers receive `BroadcastChannel` updates; hiding/closing the poller hands over immediately).
+4. **Submit queue (`lib/stellar/submit-queue.ts`)**: prefers Web Locks (`oracledesk-submit:<address>`). The `localStorage` lease fallback uses a unique per-attempt token and a `LEASE_SETTLE_MS` (50 ms) confirm re-read. Residual race: without Web Locks, a tab frozen longer than `LEASE_SETTLE_MS` can still overlap; Web Locks is required for strict mutual exclusion.

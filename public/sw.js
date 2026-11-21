@@ -41,19 +41,111 @@ async function loadManifest() {
   if (!res.ok) throw new Error(`precache manifest ${res.status}`);
   const m = await res.json();
   ROUTES = new Set(m.routes);
+  MANIFEST_FILES = m.files || {};
   return m;
+}
+
+let MANIFEST_FILES = {};
+const REVERIFY_INTERVAL_MS = 60000;
+const lastReverified = new Map();
+
+function bufferToHex(buf) {
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function normalizeDigest(d) {
+  if (!d) return "";
+  const s = String(d).trim();
+  if (s.startsWith("sha256:")) return s.slice(7).toLowerCase();
+  return s.toLowerCase();
 }
 
 async function precache() {
   if (!CACHING) return;
   const m = await loadManifest();
   const cache = await caches.open(SHELL);
+  const failures = [];
+
   try {
-    // addAll is atomic per call; on any failure (quota, 404) drop the whole
-    // cache and fail install so a half-populated shell is never activated.
-    await cache.addAll([...m.routes, ...m.assets]);
+    // 1. Precache routes (HTML): verified by status 200, non-opaque, same-origin, and text/html.
+    // Server-served route HTML bytes vary dynamically with nonces and headers, so status and type govern.
+    for (const route of m.routes) {
+      const res = await fetch(route, { cache: "no-store" });
+      if (res.status !== 200 || res.type === "opaque" || res.type === "error") {
+        throw new Error(`Route precache failed for ${route}: status ${res.status}, type ${res.type}`);
+      }
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("text/html")) {
+        throw new Error(`Route precache failed for ${route}: expected text/html, got ${ct}`);
+      }
+      await cache.put(route, res);
+    }
+
+    // 2. Precache static assets: verify response status, byte size, and SHA-256 digest
+    for (const assetUrl of m.assets) {
+      const res = await fetch(assetUrl, { cache: "no-store" });
+      if (res.status !== 200 || res.type === "opaque" || res.type === "error") {
+        failures.push({ url: assetUrl, reason: `HTTP ${res.status} (${res.type})` });
+        break;
+      }
+      const buffer = await res.arrayBuffer();
+      const meta = m.files && m.files[assetUrl];
+      if (meta && meta.size !== undefined && buffer.byteLength !== meta.size) {
+        failures.push({
+          url: assetUrl,
+          expectedSize: meta.size,
+          actualSize: buffer.byteLength,
+          reason: "size mismatch",
+        });
+        break;
+      }
+
+      const hashBuf = await crypto.subtle.digest("SHA-256", buffer);
+      const actualDigest = bufferToHex(hashBuf);
+      const expectedDigest = meta ? normalizeDigest(meta.digest) : "";
+
+      if (expectedDigest && actualDigest !== expectedDigest) {
+        failures.push({
+          url: assetUrl,
+          expected: expectedDigest,
+          actual: actualDigest,
+          reason: "digest mismatch",
+        });
+        break;
+      }
+
+      await cache.put(
+        assetUrl,
+        new Response(buffer, {
+          status: res.status,
+          statusText: res.statusText,
+          headers: res.headers,
+        })
+      );
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`Asset verification failed for ${failures[0].url}: ${failures[0].reason}`);
+    }
   } catch (err) {
     await caches.delete(SHELL);
+    // Report failure to clients (capped in size)
+    const report = {
+      type: "PRECACHE_VERIFICATION_FAILED",
+      buildId: VERSION,
+      failures: failures.slice(0, 10),
+      message: err instanceof Error ? err.message : String(err),
+    };
+    try {
+      const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const client of clients) {
+        client.postMessage(report);
+      }
+    } catch {
+      // Ignore client messaging errors
+    }
     throw err;
   }
 }
@@ -79,7 +171,44 @@ self.addEventListener("fetch", (e) => {
 
 async function cacheFirst(req) {
   const hit = await caches.match(req, { cacheName: SHELL });
-  return hit || fetch(req);
+  if (hit) {
+    // Opportunistically re-verify in background (rate-limited)
+    void reverifyCached(req, hit.clone());
+    return hit;
+  }
+  return fetch(req);
+}
+
+async function reverifyCached(req, hit) {
+  try {
+    const url = new URL(req.url);
+    const path = url.pathname;
+    if (!path.startsWith("/_next/static/")) return;
+
+    const now = Date.now();
+    const last = lastReverified.get(path) || 0;
+    if (now - last < REVERIFY_INTERVAL_MS) return;
+    lastReverified.set(path, now);
+
+    const meta = MANIFEST_FILES[path];
+    if (!meta || !meta.digest) return;
+
+    const buffer = await hit.arrayBuffer();
+    if (meta.size !== undefined && buffer.byteLength !== meta.size) {
+      const cache = await caches.open(SHELL);
+      await cache.delete(req);
+      return;
+    }
+
+    const hashBuf = await crypto.subtle.digest("SHA-256", buffer);
+    const actualDigest = bufferToHex(hashBuf);
+    if (actualDigest !== normalizeDigest(meta.digest)) {
+      const cache = await caches.open(SHELL);
+      await cache.delete(req);
+    }
+  } catch {
+    // Ignore background verification errors
+  }
 }
 
 async function networkFirst(req) {

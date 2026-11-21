@@ -73,7 +73,7 @@ export function TraceHistoryViewer({
               onClick={() => setExpandedDiff(expandedDiff === idx ? null : idx)}
               className="w-full p-4 flex items-center justify-between hover:bg-surface-container-high transition-colors"
             >
-              <div className="flex-1 text-left">
+              <div className="flex-1 text-start">
                 <div className="flex items-center gap-3 mb-2">
                   <span className="font-label-caps text-label-caps text-on-surface-variant">
                     v{idx + 1} → v{idx + 2}
@@ -94,7 +94,7 @@ export function TraceHistoryViewer({
                   {diff.probabilityChange && (
                     <div>
                       <span className="text-on-surface-variant text-xs">Probability:</span>
-                      <span className="ml-2 font-data-mono text-on-surface font-bold">
+                      <span className="ms-2 font-data-mono text-on-surface font-bold">
                         {(diff.probabilityChange.from * 100).toFixed(1)}% →{" "}
                         {(diff.probabilityChange.to * 100).toFixed(1)}%
                       </span>
@@ -112,7 +112,7 @@ export function TraceHistoryViewer({
                   {diff.estimateChange && (
                     <div>
                       <span className="text-on-surface-variant text-xs">Edge:</span>
-                      <span className="ml-2 font-data-mono text-on-surface font-bold">
+                      <span className="ms-2 font-data-mono text-on-surface font-bold">
                         {(diff.estimateChange.from * 100).toFixed(1)}% →{" "}
                         {(diff.estimateChange.to * 100).toFixed(1)}%
                       </span>
@@ -154,7 +154,7 @@ export function TraceHistoryViewer({
                               {diff.sourceDiff.added.map((src, i) => (
                                 <li key={i} className="text-xs">
                                   <span className="font-medium">{src.name}</span>
-                                  <span className="text-on-surface-variant ml-2">({(src.weight * 100).toFixed(1)}%)</span>
+                                  <span className="text-on-surface-variant ms-2">({(src.weight * 100).toFixed(1)}%)</span>
                                 </li>
                               ))}
                             </ul>
@@ -170,7 +170,7 @@ export function TraceHistoryViewer({
                               {diff.sourceDiff.removed.map((src, i) => (
                                 <li key={i} className="text-xs">
                                   <span className="font-medium">{src.name}</span>
-                                  <span className="text-on-surface-variant ml-2">({(src.weight * 100).toFixed(1)}%)</span>
+                                  <span className="text-on-surface-variant ms-2">({(src.weight * 100).toFixed(1)}%)</span>
                                 </li>
                               ))}
                             </ul>

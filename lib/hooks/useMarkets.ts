@@ -86,7 +86,6 @@ import {
   verifyMarketQuestion,
   formatHashHex,
   getCachedQuestionCheck,
-  setCachedQuestionCheck,
   type QuestionIntegrityCheck,
 } from "@/lib/stellar/market-question";
 
@@ -96,22 +95,30 @@ export function useMarketQuestionIntegrity(params: {
   displayedQuestion: string;
   metaUri?: string | null;
   questionHash?: Buffer | Uint8Array | string | null;
+  hasChainRead?: boolean;
+  chainMarket?: {
+    close_time?: bigint | number;
+    category?: unknown;
+    resolution_hash?: Buffer | Uint8Array | string | null;
+  } | null;
 }) {
   const committedHash = formatHashHex(params.questionHash);
-  const key = `${params.marketId || params.onChainMarketId || "unknown"}:${committedHash || "no-hash"}`;
+  const key = committedHash || `${params.marketId || params.onChainMarketId || "unknown"}:no-hash`;
 
   return useQuery({
-    queryKey: ["market-question-integrity", key, params.displayedQuestion],
+    queryKey: ["market-question-integrity", key, params.displayedQuestion, params.hasChainRead],
     queryFn: async (): Promise<QuestionIntegrityCheck> => {
-      const cached = getCachedQuestionCheck(key);
-      if (cached && cached.displayedQuestion === params.displayedQuestion) return cached;
-      const res = await verifyMarketQuestion({
+      if (committedHash) {
+        const cached = getCachedQuestionCheck(committedHash);
+        if (cached) return cached;
+      }
+      return verifyMarketQuestion({
         displayedQuestion: params.displayedQuestion,
         metaUri: params.metaUri,
         questionHash: params.questionHash,
+        hasChainRead: params.hasChainRead,
+        chainMarket: params.chainMarket,
       });
-      setCachedQuestionCheck(key, res);
-      return res;
     },
     staleTime: Infinity,
     enabled: Boolean(params.displayedQuestion),

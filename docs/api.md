@@ -277,6 +277,20 @@ Response: `{ jobId, status: "RUNNING"|"COMPLETED"|"FAILED"|"UNKNOWN", startedAt,
 In `dry-run` mode a completed job has `onChainMarketId: null`: the creation
 was simulated, not submitted.
 
+### Treasury admin operations
+
+#### `POST /admin/treasury/operations/prepare` (auth, admin)
+Prepares a multi-signer treasury operation (set_paused, withdraw, deposit, collect_market_fees).
+Errors: `400 PREFLIGHT_FAILED`, `400 SIMULATION_FAILED`, `400 UNSUPPORTED_ADMIN_KIND`, `400 TESTNET_ONLY`, `401 STEP_UP_REQUIRED`.
+
+#### `POST /admin/treasury/operations/:id/signatures` (auth, admin)
+Uploads a signed transaction envelope.
+Errors: `400 ADMIN_OP_HASH_MISMATCH`, `400 ADMIN_OP_EXPIRED`, `400 ADMIN_OP_NOT_SIGNABLE`.
+
+#### `POST /admin/treasury/operations/:id/submit` (auth, admin)
+Submits a collected multi-signer transaction.
+Errors: `400 ADMIN_OP_NOT_READY`, `400 TESTNET_ONLY`, `400 ADMIN_OP_EXPIRED`.
+
 ### Reasoning traces
 
 #### Trace object

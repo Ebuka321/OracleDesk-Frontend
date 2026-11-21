@@ -1,4 +1,5 @@
 import type { ContractName } from "@/lib/stellar/errors";
+import { redact } from "./redact";
 
 /** One simulation or submission, as recorded for the debug panel. No XDR, no secrets. */
 export interface SimRecord {
@@ -39,4 +40,31 @@ export function subscribeSimulations(fn: () => void): () => void {
 /** Test helper. */
 export function resetSimulations(): void {
   buffer = [];
+}
+
+export interface PolicyFindingRecord {
+  at: number;
+  policy: "watch" | "authority" | "recipient";
+  candidate: string;
+  findings: Array<{ kind: string; of?: string; prefix?: number; suffix?: number }>;
+}
+
+let policyBuffer: PolicyFindingRecord[] = [];
+
+export function recordPolicyFinding(record: Omit<PolicyFindingRecord, "at">): void {
+  try {
+    const redacted = redact({
+      at: Date.now(),
+      policy: record.policy,
+      candidate: record.candidate,
+      findings: record.findings,
+    }) as PolicyFindingRecord;
+    policyBuffer = [...policyBuffer, redacted].slice(-MAX);
+  } catch {
+    // diagnostics only
+  }
+}
+
+export function policyFindingSnapshot(): readonly PolicyFindingRecord[] {
+  return policyBuffer;
 }

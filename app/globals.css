@@ -16,6 +16,15 @@
   .animate-ticker {
     animation: ticker 30s linear infinite;
   }
+  .animate-ticker-rtl {
+    animation: ticker-rtl 30s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-ticker,
+    .animate-ticker-rtl {
+      animation: none;
+    }
+  }
 }
 
 @layer components {

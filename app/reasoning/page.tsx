@@ -9,7 +9,9 @@ import { mergeTracePages } from "@/lib/hooks/trace-feed";
 import { getTrace, type ReasoningTrace } from "@/lib/api/traces";
 import { useWallet } from "@/lib/contexts/WalletContext";
 import { X402_ENABLED, useUnlockCart } from "@/lib/hooks/useX402";
-import { UnlockCart } from "@/components/trace/unlock-cart";
+// Issue #229: UnlockCart is lazy-loaded so the x402 bundle doesn't block the reasoning route
+import dynamic from "next/dynamic";
+const UnlockCart = dynamic(() => import("@/components/trace/unlock-cart").then((m) => ({ default: m.UnlockCart })), { ssr: false, loading: () => null });
 import { DAILY_PASS_PRICE_RAW } from "@/lib/stellar/config";
 
 /** Fallback daily-pass price when no trace quoted one (same rule as /premium). */
@@ -102,7 +104,7 @@ const ReasoningCard = ({ trace, disableEntrance = true }: ReasoningCardProps) =>
           <h2 className="font-headline-sm text-headline-sm text-on-surface mb-1 uppercase tracking-tight">{trace.market?.question ?? "Market Analysis"}</h2>
           <p className="font-body-md text-on-surface-variant italic">&quot;{decisionType}&quot;</p>
         </div>
-        <div className="flex items-center gap-6 md:border-l md:pl-6 border-outline-variant">
+        <div className="flex items-center gap-6 md:border-s md:ps-6 border-outline-variant">
           <div className="text-center">
             <div className="font-label-caps text-[10px] text-outline uppercase mb-1">Confidence</div>
             <div className="font-data-mono text-headline-sm text-primary">{yesProb}%</div>
@@ -136,7 +138,7 @@ const ReasoningCard = ({ trace, disableEntrance = true }: ReasoningCardProps) =>
             Copy Trade
           </Link>
           <Link
-            href={`/agent/${encodeURIComponent(id)}`}
+            href={`/agent/${encodeURIComponent(trace.agentId ?? id)}`}
             className="px-4 py-2 bg-surface-container-low border border-outline text-on-surface rounded font-label-caps text-label-caps hover:bg-surface-variant transition-all"
           >
             View Agent Profile

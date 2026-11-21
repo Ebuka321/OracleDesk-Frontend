@@ -19,7 +19,7 @@ Last updated: 2026-10-19. The latest issue verification is below; the original S
   pagination meta. `lib/__tests__/no-fabricated-trace-data.test.ts` guards the page.
 
 Validation: `typecheck` 0 errors · `lint` 0 errors, 31 existing warnings (3 fewer than
-before this session: unused Hero/sidebar state) · `test` 34 files, 282 tests, no type
+before this session: unused Hero/sidebar state) · `test` passing, no type
 errors · `build` exit 0 with 0 `width(-1)` occurrences and the price-history worker
 chunk emitted. Pre-existing breakage found and fixed along the way: unexported
 `extractSources`/`matchSources` (typecheck), a brittle `toBe(0.2)` float assertion, an
@@ -42,7 +42,7 @@ run, which is outside these issues' verification.
   own-wallet classification, resolution/redemption polling and a real bell count.
 
 Validation: `check:bindings`, `typecheck`, `lint`, `test` and `build` pass.
-The suite has 176 tests across 25 files; lint reports 31 existing warnings and
+The suite passes (run `npm test` for current counts); lint reports 31 existing warnings and
 no errors. Production prerender still reports the existing Recharts container
 size warnings. Baseline merge defects in trading-hook imports, SDK 16 trustline
 calls, ledger-clock RPC access, transaction review and tracker polling were
@@ -125,7 +125,7 @@ The app pins `@stellar/stellar-sdk` to 16.3.1 and `@creit.tech/stellar-wallets-k
 | C6. Suspense build failure | ✅ | Reproduced and fixed (below) |
 | C7. Tests | ✅ | 21 Vitest tests |
 | D. End to end | ✅ read paths | See below |
-| E. Contributor readiness | ✅ files, ⚠️ CI never ran on GitHub | README, CONTRIBUTING, SECURITY, CoC, LICENSE, templates, CI |
+| E. Contributor readiness | ✅ files & CI | README, CONTRIBUTING, SECURITY, CoC, LICENSE, templates, CI (`install`, `frontend`, `x402-contract`, `secrets-canary`, `perf`) |
 | F. Backlog | ✅ | 14 drafts in `docs/wave-issues/` (5 good first issues) |
 
 ## Baseline (before any change)
@@ -143,7 +143,7 @@ The app pins `@stellar/stellar-sdk` to 16.3.1 and `@creit.tech/stellar-wallets-k
 
 ## Fully verified (commands run, output observed)
 
-- `npm run typecheck` 0 · `npm run lint` 0 · `npm run check:bindings` 0 · `npm test` 0 (4 files, 21 tests) · `npm run build` 0 with all 27 routes prerendered as static.
+- `npm run typecheck` 0 · `npm run lint` 0 · `npm run check:bindings` 0 · `npm test` 0 · `npm run build` 0 with all 27 routes prerendered as static.
 - `grep -rnE "from ['\"](wagmi|viem|@reown|@rainbow-me)" app components lib` → no matches; package.json has none of them.
 - **C6:** with the `<Suspense>` boundary temporarily removed from `/markets/quick-view`, `next build` failed with "useSearchParams() should be wrapped in a suspense boundary at page /markets/quick-view … Export encountered an error". With it restored, the build passes. `/copy-trade` and `/reasoning/verify` use the same pattern.
 - A fresh `git clone --recurse-submodules -b feat/stellar-port` of this repo checks out `contracts` at `eb5f3fd`, and `npm ci`, `check:bindings`, `typecheck`, `lint`, `test` and `build` pass in it.

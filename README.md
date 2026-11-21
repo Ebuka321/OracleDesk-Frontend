@@ -67,10 +67,24 @@ Configuration is validated at startup and before `next build`: contract ids and 
 | `npm run build` / `npm start` | Production build / serve it |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint |
-| `npm test` | Vitest unit tests (`lib/**/*.test.ts`) |
+| `npm test` | Vitest `unit` (node) and `dom` (jsdom) projects over `lib`, `components`, `app` and `scripts` |
 | `npm run e2e:testnet` | Optional read-only check against a running backend and live testnet |
 | `npm run sync:bindings` | Copy generated contract code from `contracts/` into `lib/stellar/generated/` |
 | `npm run check:bindings` | Fail if `lib/stellar/generated/` is stale (CI runs this) |
+| `npm run test:props` | Long fast-check run of the FPMM property tests |
+| `npm run test:mutation` | Stryker mutation run plus the score check |
+| `npm run test:coverage` | Vitest with coverage |
+| `npm run test:api-contract` | API contract tests (`vitest.contract.config.mts`) |
+| `npm run fixtures:record` / `npm run fixtures:check` | Record or verify recorded fixtures |
+| `npm run check:api-doc` | Check `docs/api.md` against the code |
+| `npm run check:api-errors` | Check the API error code list (CI runs this) |
+| `npm run check:env` | Fail if `.env.example` and the code disagree (CI runs this) |
+| `npm run check:sdk` | Check the Stellar SDK major version (CI runs this) |
+| `npm run check:origins` | Check external origins against the allowlist (CI runs this) |
+| `npm run check:docs` | Fail if the docs reference npm scripts or script files that do not exist (CI runs this) |
+| `npm run scan:secrets` | Scan the build output for secrets (CI runs this) |
+| `npm run install:allowed-scripts` | Run the allow-listed dependency install scripts |
+| `npm run perf:lhci` | Lighthouse CI budgets |
 
 ## Project structure
 
@@ -85,7 +99,8 @@ lib/stellar/generated/  Copied from the contracts submodule. Do not edit.
 contracts/              OracleDesk-SmartContract submodule (pinned)
 scripts/                sync-bindings.mjs
 e2e/                    Opt-in testnet checks
-docs/                   API contract, architecture, porting notes, status, backlog
+docs/                   API contract, architecture, reproducible build guide, porting notes, status, backlog
+See [docs/reproducible-build.md](docs/reproducible-build.md) for deterministic static builds and verification.
 ```
 
 ## Deployed testnet contracts

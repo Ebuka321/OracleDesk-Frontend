@@ -2,6 +2,8 @@ export interface NavItem {
   label: string;
   href: string;
   children?: { label: string; href: string }[];
+  /** Permission required to view this item in navigation (RBAC) */
+  permission?: "admin.read";
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
@@ -11,6 +13,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     children: [
       { label: "Live Terminal", href: "/markets/terminal" },
       { label: "Active Market Detail", href: "/market" },
+      { label: "FPMM Explainer", href: "/learn/fpmm" },
     ],
   },
   {
@@ -33,6 +36,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   {
     label: "Admin",
     href: "/admin",
+    permission: "admin.read",
   },
 ] as const;
 

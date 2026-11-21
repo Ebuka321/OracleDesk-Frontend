@@ -8,6 +8,7 @@ import {
   type ContractName,
   type TxDescribedError,
 } from "./errors";
+import { integrityMonitor } from "./integrity-monitor";
 
 export type { TxDescribedError };
 
@@ -93,7 +94,7 @@ export class TxLifecycle<T> {
     this.getServer = typeof server === "function" ? server : () => server;
     this.contract = opts.contract;
     this.pollIntervalMs = opts.pollIntervalMs ?? 1000;
-    this.maxPollMs = opts.maxPollMs ?? 60_000;
+    this.maxPollMs = opts.maxPollMs ?? 300_000;
     this.onHash = opts.onHash;
   }
 
@@ -145,6 +146,21 @@ export class TxLifecycle<T> {
       this.setPhase({ name: "failed", hash: null, error: described });
       if (err instanceof UserFacingError) throw err;
       throw new UserFacingError(described, err);
+    }
+
+    // 1.5 Pre-sign integrity freshness check
+    try {
+      const integritySnapshot = await integrityMonitor.ensureFresh();
+      if (integritySnapshot.status === "failed") {
+        const described: TxDescribedError = {
+          kind: "contract",
+          message: "This app is out of date with the deployed contracts. Trading is disabled until it's updated.",
+        };
+        this.setPhase({ name: "failed", hash: null, error: described });
+        throw new UserFacingError(described);
+      }
+    } catch (err) {
+      if (err instanceof UserFacingError) throw err;
     }
 
     // 2. Awaiting signature
@@ -278,7 +294,7 @@ export class TxLifecycle<T> {
           getRes.latestLedgerCloseTime !== undefined &&
           (getRes.latestLedgerCloseTime - initialLedgerCloseTime) * 1000 >= this.maxPollMs;
 
-        if (isPastTimeBound || isPastMaxPoll) {
+        if (isPastTimeBound || (isPastMaxPoll && !maxTime)) {
           const error: TxDescribedError = {
             kind: "expired",
             submission: "not-found-after-timeout",

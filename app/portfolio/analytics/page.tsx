@@ -21,6 +21,7 @@ import { getMarketByOnChainId } from "@/lib/api/markets";
 import { explorerTx } from "@/lib/stellar/config";
 import { bpsToPercent, formatUsdc, usdcToNumber } from "@/lib/stellar/units";
 import { ExportHistoryDialog } from "@/components/portfolio/export-history-dialog";
+import { useDirection } from "@/components/layout/DirectionProvider";
 
 const RANGES: { label: string; seconds: number }[] = [
   { label: "1D", seconds: 86_400 },
@@ -74,6 +75,7 @@ const StateCard = ({ children }: { children: React.ReactNode }) => (
 );
 
 export default function PortfolioAnalytics() {
+  const dir = useDirection();
   const { address, openModal } = useWallet();
   const [rangeS, setRangeS] = useState(86_400);
   const [exportOpen, setExportOpen] = useState(false);
@@ -196,22 +198,26 @@ export default function PortfolioAnalytics() {
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#bfc8cc" opacity={0.3} />
+                    {/* Chart X-axis reverses in RTL for time; Y-axis moves to right; numeric ticks stay LTR */}
                     <XAxis
                       dataKey="time"
                       type="number"
                       domain={["dataMin", "dataMax"]}
+                      reversed={dir === "rtl"}
                       tickFormatter={tickFormat}
                       tick={{ fontSize: 11, fill: "#687076" }}
                       stroke="#bfc8cc"
                     />
                     <YAxis
                       domain={["auto", "auto"]}
+                      orientation={dir === "rtl" ? "right" : "left"}
                       tickFormatter={(value: number) => `$${Number(value).toFixed(0)}`}
                       tick={{ fontSize: 11, fill: "#687076" }}
                       stroke="#bfc8cc"
                       width={64}
                     />
                     <Tooltip
+                      wrapperStyle={{ direction: dir }}
                       contentStyle={{ backgroundColor: "#ffffff", borderRadius: "8px", border: "1px solid #bfc8cc" }}
                       labelStyle={{ fontFamily: "Geist", fontWeight: "bold" }}
                       labelFormatter={(time) => new Date(Number(time)).toLocaleString()}
@@ -241,15 +247,15 @@ export default function PortfolioAnalytics() {
                 <h3 className="font-headline-sm text-headline-sm text-on-surface">Recent Activity</h3>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-left">
+                <table className="w-full text-start">
                   <thead>
                     <tr className="bg-surface-container-low border-b border-outline-variant">
                       <th className="px-6 py-4 font-label-caps text-label-caps text-on-surface-variant">Market</th>
                       <th className="px-6 py-4 font-label-caps text-label-caps text-on-surface-variant">Type</th>
                       <th className="px-6 py-4 font-label-caps text-label-caps text-on-surface-variant">Side</th>
                       <th className="px-6 py-4 font-label-caps text-label-caps text-on-surface-variant">Time</th>
-                      <th className="px-6 py-4 font-label-caps text-label-caps text-on-surface-variant text-right">Amount</th>
-                      <th className="px-6 py-4 font-label-caps text-label-caps text-on-surface-variant text-right">Transaction</th>
+                      <th className="px-6 py-4 font-label-caps text-label-caps text-on-surface-variant text-end">Amount</th>
+                      <th className="px-6 py-4 font-label-caps text-label-caps text-on-surface-variant text-end">Transaction</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-outline-variant">
@@ -269,10 +275,10 @@ export default function PortfolioAnalytics() {
                           <td className="px-6 py-4 font-data-mono text-on-surface-variant whitespace-nowrap">
                             {new Date(entry.time).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                           </td>
-                          <td className={`px-6 py-4 font-data-mono text-right ${flow >= 0n ? "text-secondary" : "text-error"}`}>
+                          <td className={`px-6 py-4 font-data-mono text-end ${flow >= 0n ? "text-secondary" : "text-error"}`}>
                             {usdcSigned(flow)}
                           </td>
-                          <td className="px-6 py-4 text-right">
+                          <td className="px-6 py-4 text-end">
                             <a
                               href={explorerTx(entry.txHash) ?? undefined}
                               target="_blank"

@@ -22,23 +22,41 @@ export const MAX_TOTAL_SERIALIZED_BYTES = 1024 * 1024; // 1 MB
  * or disguise dangerous file extensions and URLs.
  * Matches U+200E, U+200F, U+202A..U+202E, U+2066..U+2069, U+061C.
  */
-const BIDI_REGEX = /[\u200E\u200F\u202A-\u202E\u2066-\u2069\u061C]/g;
+export const BIDI_REGEX = /[\u200E\u200F\u202A-\u202E\u2066-\u2069\u061C]/g;
 
 /**
  * Control characters excluding standard whitespace (\t, \n, \r).
  */
-const CONTROL_CHARS_REGEX = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
+export const CONTROL_CHARS_REGEX = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
+
+export interface SanitizationResult {
+  cleaned: string;
+  hasBidi: boolean;
+  hasControls: boolean;
+}
+
+/**
+ * Sanitizes a string by stripping bidi overrides and control characters,
+ * while detecting if any were present.
+ */
+export function sanitizeStringWithWarnings(val: unknown, maxLength = MAX_TRACE_STRING_LENGTH): SanitizationResult {
+  if (val === null || val === undefined) {
+    return { cleaned: "", hasBidi: false, hasControls: false };
+  }
+  const str = String(val);
+  const hasBidi = BIDI_REGEX.test(str);
+  const hasControls = CONTROL_CHARS_REGEX.test(str);
+  const cleaned = str.replace(BIDI_REGEX, "").replace(CONTROL_CHARS_REGEX, "");
+  const finalStr = cleaned.length <= maxLength ? cleaned : cleaned.slice(0, maxLength) + "…";
+  return { cleaned: finalStr, hasBidi, hasControls };
+}
 
 /**
  * Strips dangerous bidi overrides and non-printable control characters,
  * then enforces a max length limit.
  */
 export function sanitizeString(val: unknown, maxLength = MAX_TRACE_STRING_LENGTH): string {
-  if (val === null || val === undefined) return "";
-  const str = String(val);
-  const cleaned = str.replace(BIDI_REGEX, "").replace(CONTROL_CHARS_REGEX, "");
-  if (cleaned.length <= maxLength) return cleaned;
-  return cleaned.slice(0, maxLength) + "…";
+  return sanitizeStringWithWarnings(val, maxLength).cleaned;
 }
 
 /**
@@ -80,7 +98,7 @@ export function sanitizeUrl(url: unknown): string | null {
 export interface TraceSource {
   name: string;
   weight: number;
-  signal: string;
+  signal?: string;
   url?: string | null;
 }
 
@@ -93,7 +111,7 @@ export interface ValidatedTraceContent {
   edge?: number;
   confidence?: number;
   confidenceInterval?: { lower: number; upper: number };
-  reasoning: string;
+  reasoning?: string;
   sources: TraceSource[];
   conditions?: string[];
   betFraction?: number;
@@ -106,33 +124,23 @@ export type TraceValidationResult =
   | { ok: true; data: ValidatedTraceContent; warnings: string[] }
   | { ok: false; error: string };
 
-function clampNumber(val: unknown, min: number, max: number): number | undefined {
-  if (val === null || val === undefined) return undefined;
-  const num = Number(val);
-  if (!Number.isFinite(num)) return undefined;
-  return Math.min(max, Math.max(min, num));
-}
-
 const KNOWN_ROOT_KEYS = new Set([
   "version",
-  "schemaVersion",
   "agent",
   "agentType",
-  "model",
   "action",
   "decisionType",
-  "probability",
+  "decision",
   "probabilityEstimate",
-  "yesProb",
-  "edge",
+  "probability",
   "estimate",
-  "expectedValue",
+  "edge",
   "confidence",
   "confidenceInterval",
+  "ci",
   "reasoning",
-  "summary",
   "explanation",
-  "rationale",
+  "summary",
   "sources",
   "sourcesUsed",
   "previewSources",
@@ -145,34 +153,35 @@ const KNOWN_ROOT_KEYS = new Set([
   "createdAt",
 ]);
 
+function clampNumber(val: unknown, min: number, max: number): number | undefined {
+  if (typeof val !== "number" || Number.isNaN(val) || !Number.isFinite(val)) return undefined;
+  return Math.min(Math.max(val, min), max);
+}
+
 /**
- * Validates and sanitizes raw trace content against version 1 schema.
- * Treats all unrecognized keys as inert data.
+ * Validates, normalizes, and sanitizes untrusted reasoning trace JSON.
  */
-export function validateTraceContent(raw: unknown): TraceValidationResult {
-  if (raw === null || raw === undefined) {
-    return { ok: false, error: "Trace content is empty" };
+export function validateTraceContent(content: unknown): TraceValidationResult {
+  if (!content) {
+    return { ok: false, error: "Empty or null trace content" };
   }
 
   let obj: Record<string, unknown>;
-  const warnings: string[] = [];
-
-  if (typeof raw === "string") {
+  if (typeof content === "string") {
     try {
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(content);
       if (typeof parsed === "object" && parsed !== null) {
         obj = parsed as Record<string, unknown>;
       } else {
-        // Plain string trace: wrap safely as plain reasoning
         return {
           ok: true,
           data: {
             version: 1,
-            reasoning: sanitizeString(raw),
+            reasoning: sanitizeString(content),
             sources: [],
             rawUnknownFields: {},
           },
-          warnings: ["Content is raw text, not structured JSON"],
+          warnings: ["Content parsed as primitive string; wrapped in standard schema."],
         };
       }
     } catch {
@@ -180,57 +189,55 @@ export function validateTraceContent(raw: unknown): TraceValidationResult {
         ok: true,
         data: {
           version: 1,
-          reasoning: sanitizeString(raw),
+          reasoning: sanitizeString(content),
           sources: [],
           rawUnknownFields: {},
         },
-        warnings: ["Content is unparsed text"],
+        warnings: ["Content is non-JSON raw text; wrapped in standard schema."],
       };
     }
-  } else if (typeof raw === "object") {
-    obj = raw as Record<string, unknown>;
+  } else if (typeof content === "object") {
+    obj = content as Record<string, unknown>;
   } else {
-    return { ok: false, error: `Invalid trace content type: ${typeof raw}` };
+    return { ok: false, error: "Trace content must be an object or string" };
   }
 
-  // Version identification
-  const versionNum = typeof obj.version === "number" ? obj.version : typeof obj.schemaVersion === "number" ? obj.schemaVersion : 1;
+  const warnings: string[] = [];
 
-  // Reasoning / Summary
-  const rawReasoning = obj.reasoning ?? obj.summary ?? obj.explanation ?? obj.rationale ?? "";
-  const reasoning = sanitizeString(rawReasoning, MAX_TRACE_STRING_LENGTH);
-
-  // Action / Decision
-  const rawAction = obj.action ?? obj.decisionType;
-  const action = rawAction ? sanitizeString(rawAction, 100) : undefined;
-  const decisionType = obj.decisionType ? sanitizeString(obj.decisionType, 100) : action;
-
-  // Agent
-  const rawAgent = obj.agent ?? obj.agentType ?? obj.model;
-  const agent = rawAgent ? sanitizeString(rawAgent, 100) : undefined;
-
-  // Probability
-  let probabilityEstimate: number | undefined;
-  const rawProb = obj.probabilityEstimate ?? obj.probability ?? obj.yesProb;
-  if (rawProb !== undefined && rawProb !== null) {
-    const p = Number(rawProb);
-    if (Number.isFinite(p)) {
-      // Normalize percentages > 1 to 0..1
-      probabilityEstimate = p > 1 && p <= 100 ? p / 100 : clampNumber(p, 0, 1);
-    }
+  // Version check
+  const rawVersion = obj.version;
+  const versionNum = typeof rawVersion === "number" && Number.isFinite(rawVersion) ? Math.floor(rawVersion) : 1;
+  if (versionNum > 2) {
+    warnings.push(`Trace schema version ${versionNum} is newer than current viewer support (v2); rendered in compatibility mode.`);
   }
 
-  // Edge & Confidence
-  const edge = clampNumber(obj.edge ?? obj.estimate ?? obj.expectedValue, -1, 1);
+  // String fields with warning tracking
+  const checkField = (fieldVal: unknown, maxLen: number, label: string): string | undefined => {
+    if (!fieldVal) return undefined;
+    const { cleaned, hasBidi, hasControls } = sanitizeStringWithWarnings(fieldVal, maxLen);
+    if (hasBidi) warnings.push(`Sanitization: Stripped bidi override characters from ${label}`);
+    if (hasControls) warnings.push(`Sanitization: Stripped control characters from ${label}`);
+    return cleaned;
+  };
+
+  const agent = checkField(obj.agent ?? obj.agentType, MAX_NAME_STRING_LENGTH, "agent name");
+  const action = checkField(obj.action ?? obj.decisionType ?? obj.decision, 50, "action");
+  const decisionType = checkField(obj.decisionType ?? obj.action, 50, "decisionType");
+  const reasoning = checkField(obj.reasoning ?? obj.explanation ?? obj.summary, MAX_TRACE_STRING_LENGTH, "reasoning");
+
+  // Metrics
+  const rawProb = obj.probabilityEstimate ?? obj.probability ?? obj.estimate;
+  const probabilityEstimate = clampNumber(rawProb, 0, 1) ?? (typeof rawProb === "number" && rawProb > 1 && rawProb <= 100 ? rawProb / 100 : undefined);
+  const edge = clampNumber(obj.edge, -1, 1);
   const confidence = clampNumber(obj.confidence, 0, 1);
 
   // Confidence Interval
   let confidenceInterval: { lower: number; upper: number } | undefined;
-  if (typeof obj.confidenceInterval === "object" && obj.confidenceInterval !== null) {
-    const ci = obj.confidenceInterval as Record<string, unknown>;
-    const lower = Number(ci.lower);
-    const upper = Number(ci.upper);
-    if (Number.isFinite(lower) && Number.isFinite(upper)) {
+  const rawCi = (obj.confidenceInterval ?? obj.ci) as Record<string, unknown> | undefined;
+  if (rawCi && typeof rawCi === "object") {
+    const lower = clampNumber(rawCi.lower ?? rawCi.min, 0, 1);
+    const upper = clampNumber(rawCi.upper ?? rawCi.max, 0, 1);
+    if (lower !== undefined && upper !== undefined && lower <= upper) {
       confidenceInterval = {
         lower: lower > 1 && lower <= 100 ? lower / 100 : Math.max(0, lower),
         upper: upper > 1 && upper <= 100 ? upper / 100 : Math.min(1, upper),
@@ -249,9 +256,18 @@ export function validateTraceContent(raw: unknown): TraceValidationResult {
     for (const item of sliced) {
       if (typeof item === "object" && item !== null) {
         const s = item as Record<string, unknown>;
-        const name = sanitizeString(s.name ?? s.source ?? "Source", MAX_NAME_STRING_LENGTH);
+        const nameRes = sanitizeStringWithWarnings(s.name ?? s.source ?? "Source", MAX_NAME_STRING_LENGTH);
+        if (nameRes.hasBidi) warnings.push(`Sanitization: Stripped bidi override from source name "${nameRes.cleaned}"`);
+        if (nameRes.hasControls) warnings.push(`Sanitization: Stripped control characters from source name "${nameRes.cleaned}"`);
+        const name = nameRes.cleaned;
+
         const weight = clampNumber(s.weight, 0, 1) ?? 0;
-        const signal = sanitizeString(s.signal ?? "", MAX_SIGNAL_STRING_LENGTH);
+
+        const sigRes = sanitizeStringWithWarnings(s.signal ?? "", MAX_SIGNAL_STRING_LENGTH);
+        if (sigRes.hasBidi) warnings.push(`Sanitization: Stripped bidi override from source signal in "${name}"`);
+        if (sigRes.hasControls) warnings.push(`Sanitization: Stripped control characters from source signal in "${name}"`);
+        const signal = sigRes.cleaned;
+
         const url = sanitizeUrl(s.url ?? s.link);
         if (s.url && !url) {
           warnings.push(`Unsafe or invalid URL filtered from source "${name}"`);
@@ -267,7 +283,11 @@ export function validateTraceContent(raw: unknown): TraceValidationResult {
   if (Array.isArray(rawConditions)) {
     const sliced = rawConditions.slice(0, MAX_CONDITIONS_COUNT);
     for (const cond of sliced) {
-      if (cond) conditions.push(sanitizeString(cond, 500));
+      if (cond) {
+        const condRes = sanitizeStringWithWarnings(cond, 500);
+        if (condRes.hasBidi) warnings.push("Sanitization: Stripped bidi override from condition");
+        conditions.push(condRes.cleaned);
+      }
     }
   }
 

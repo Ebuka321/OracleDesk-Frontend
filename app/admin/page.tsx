@@ -8,7 +8,7 @@ import { useWallet } from "@/lib/contexts/WalletContext";
 import { useMarkets } from "@/lib/hooks/useMarkets";
 import { usePlatformStats } from "@/lib/hooks/usePortfolio";
 import { floatUsdcToRaw, formatUsdcDisplay } from "@/lib/format/money";
-import { isAdminAddress } from "@/lib/stellar/config";
+import { useAdminPermissions } from "@/lib/admin/useAdminPermissions";
 import { DiagnosticsPanel } from "@/components/admin/diagnostics-panel";
 import { JobStatusChip } from "@/components/admin/job-status-chip";
 import { useAdminJobs } from "@/lib/admin/job-store";
@@ -67,7 +67,7 @@ const MarketItem = ({ title, status, volume, volumeLabel = "Liquidity" }: { titl
         <span className="text-[11px] text-on-surface-variant uppercase font-label-caps">{status}</span>
       </div>
     </div>
-    <div className="text-right">
+    <div className="text-end">
       <p className="font-data-mono text-data-mono text-on-surface">{volume}</p>
       <p className="text-[11px] text-on-surface-variant uppercase font-label-caps text-[10px]">{volumeLabel}</p>
     </div>
@@ -87,13 +87,23 @@ export default function AdminDashboard() {
 
 function AdminContent() {
   const { address, disconnect, openModal } = useWallet();
+  const { can, isLoading: isPermissionsLoading, isDevelopmentFallback } = useAdminPermissions();
   const { data: marketsData, isLoading } = useMarkets({ limit: 10 });
   const { data: stats } = usePlatformStats();
   const markets = marketsData?.markets ?? [];
 
-  // UI gate only. The backend checks ADMIN_ADDRESSES itself on every admin
-  // request; hiding this page does not protect anything.
-  const isAuthorized = isAdminAddress(address);
+  // Gate on admin.read permission derived from backend RBAC
+  const isAuthorized = can("admin.read");
+
+  if (isPermissionsLoading) {
+    return (
+      <main className="flex-grow flex items-center justify-center p-gutter">
+        <div className="p-8 text-center text-on-surface-variant font-label-caps animate-pulse">
+          Resolving administrative authorization…
+        </div>
+      </main>
+    );
+  }
 
   if (!isAuthorized) {
     return (
@@ -126,6 +136,12 @@ function AdminContent() {
 
   return (
     <main className="flex-grow max-w-container-max-width mx-auto px-gutter py-12 w-full space-y-8">
+      {isDevelopmentFallback && (
+        <div role="note" className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-700 text-xs flex items-center gap-2">
+          <Icon name="warning" className="text-sm" />
+          <span>DEVELOPMENT FALLBACK: Gated by local environment addresses, not real backend authorization. Never active in production.</span>
+        </div>
+      )}
       <div className="flex flex-col md:flex-row justify-between items-end gap-6">
         <div className="space-y-2">
           <h1 className="font-display-lg text-display-lg text-primary text-4xl">Admin Control Center</h1>
@@ -133,12 +149,57 @@ function AdminContent() {
             Monitor protocol health and manage institutional prediction markets.
           </p>
         </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          {can("markets.generate") && (
+            <Link 
+              href="/admin/create" 
+              className="bg-primary text-primary-foreground px-6 py-4 rounded-lg font-label-caps text-label-caps flex items-center gap-2 hover:brightness-110 active:scale-[0.98] transition-all shadow-lg"
+            >
+              <Icon name="add_circle" />
+              CREATE NEW MARKET
+            </Link>
+          )}
+          {can("agents.manage") && (
+            <Link
+              href="/admin/agents"
+              className="border border-outline text-on-surface px-6 py-4 rounded-lg font-label-caps text-label-caps flex items-center gap-2 hover:bg-surface-container-low transition-all"
+            >
+              <Icon name="smart_toy" />
+              MANAGE AGENTS
+            </Link>
+          )}
+          {can("admin.read") && (
+            <Link
+              href="/admin/roles"
+              className="border border-outline text-on-surface px-6 py-4 rounded-lg font-label-caps text-label-caps flex items-center gap-2 hover:bg-surface-container-low transition-all"
+            >
+              <Icon name="verified_user" />
+              ROLES &amp; ACCESS
+            </Link>
+          )}
+          {can("reconciliation.run") && (
+            <Link
+              href="/admin/reconciliation"
+              className="border border-outline text-on-surface px-6 py-4 rounded-lg font-label-caps text-label-caps flex items-center gap-2 hover:bg-surface-container-low transition-all"
+            >
+              <Icon name="find_match" />
+              RECONCILIATION
+            </Link>
+          )}
+        </div>
         <Link 
           href="/admin/create" 
           className="bg-primary text-primary-foreground px-6 py-4 rounded-lg font-label-caps text-label-caps flex items-center gap-2 hover:brightness-110 active:scale-[0.98] transition-all shadow-lg"
         >
           <Icon name="add_circle" />
           CREATE NEW MARKET
+        </Link>
+        <Link
+          href="/admin/treasury"
+          className="border border-primary text-primary px-6 py-4 rounded-lg font-label-caps text-label-caps flex items-center gap-2 hover:bg-primary/10 transition-all font-bold"
+        >
+          <Icon name="account_balance" />
+          TREASURY CONSOLE
         </Link>
         <Link
           href="/admin/agents"

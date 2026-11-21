@@ -13,6 +13,7 @@ import {
   useVirtualizer,
   defaultRangeExtractor,
   type Range,
+  type VirtualItem,
 } from "@tanstack/react-virtual";
 import {
   columnsForWidth,
@@ -52,18 +53,24 @@ function useWindowWidth(): number {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
 
-function loadRestoration(key?: string): { offset: number; measurements: any; cols?: number } | null {
+interface Restoration {
+  offset: number;
+  measurements: VirtualItem[];
+  cols?: number;
+}
+
+function loadRestoration(key?: string): Restoration | null {
   if (!key || typeof window === "undefined") return null;
   try {
     const raw = sessionStorage.getItem(`vl_restore_${key}`);
-    if (raw) return JSON.parse(raw);
+    if (raw) return JSON.parse(raw) as Restoration;
   } catch {
     // sessionStorage disabled or unavailable
   }
   return null;
 }
 
-function saveRestoration(key?: string, data?: { offset: number; measurements: any; cols?: number }) {
+function saveRestoration(key?: string, data?: Restoration) {
   if (!key || typeof window === "undefined" || !data) return;
   try {
     sessionStorage.setItem(`vl_restore_${key}`, JSON.stringify(data));
@@ -156,7 +163,7 @@ export function VirtualList<T>({
     const handleSave = () => {
       saveRestoration(restorationKey, {
         offset: virtualizer.scrollOffset ?? 0,
-        measurements: (virtualizer as any).measurementsCache ?? [],
+        measurements: virtualizer.measurementsCache ?? [],
         cols: currentCols,
       });
     };
@@ -336,7 +343,7 @@ export function VirtualTableBody<T>({
     const handleSave = () => {
       saveRestoration(restorationKey, {
         offset: virtualizer.scrollOffset ?? 0,
-        measurements: (virtualizer as any).measurementsCache ?? [],
+        measurements: virtualizer.measurementsCache ?? [],
       });
     };
     window.addEventListener("pagehide", handleSave);

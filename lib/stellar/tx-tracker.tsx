@@ -2,15 +2,19 @@
 
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useWalletAddress } from "@/lib/contexts/WalletContext";
 import { NETWORK_PASSPHRASE } from "./config";
 import { rpcServer } from "./clients";
 import {
+  TX_POLL_INTERVAL_MS,
   evaluateTxStatus,
   loadRecords,
   mergeRecords,
   saveRecords,
+  storageKeyForHolder,
   tradeInvalidationKeys,
   isValidRecord,
+  withTxPollClaim,
   type TrackedKind,
   type TrackedTx,
 } from "./tx-tracker-core";
@@ -36,10 +40,12 @@ export function useTxTracker(): TrackerApi {
 
 export function TransactionTrackerProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
+  const { address } = useWalletAddress();
+
   const [records, setRecords] = useState<TrackedTx[]>(() => {
-    if (typeof window === "undefined") return [];
+    if (typeof window === "undefined" || !address) return [];
     try {
-      return loadRecords(window.sessionStorage, NETWORK_PASSPHRASE);
+      return loadRecords(window.localStorage, NETWORK_PASSPHRASE, Date.now(), address);
     } catch {
       return [];
     }
@@ -50,9 +56,23 @@ export function TransactionTrackerProvider({ children }: { children: React.React
     recordsRef.current = records;
   }, [records]);
 
+  const addressRef = useRef<string | null>(address);
+  useEffect(() => {
+    addressRef.current = address;
+    if (typeof window === "undefined") return;
+    if (!address) {
+      setRecords([]);
+      return;
+    }
+    try {
+      setRecords(loadRecords(window.localStorage, NETWORK_PASSPHRASE, Date.now(), address));
+    } catch {
+      setRecords([]);
+    }
+  }, [address]);
+
   const channelRef = useRef<BroadcastChannel | null>(null);
-  const pollerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isPollingRef = useRef<boolean>(false);
+  const pollWakeRef = useRef<(() => void) | null>(null);
 
   // Invalidate queries when a transaction finalises
   const invalidateFor = useCallback(
@@ -68,115 +88,194 @@ export function TransactionTrackerProvider({ children }: { children: React.React
     [queryClient],
   );
 
-  // Sync to sessionStorage
-  const updateRecords = useCallback((updater: (prev: TrackedTx[]) => TrackedTx[]) => {
+  // Sync to owner-scoped localStorage (re-reading before writing so peer tabs never lose updates)
+  const updateRecords = useCallback((updater: (prev: TrackedTx[]) => TrackedTx[], targetHolder?: string | null) => {
+    const holder = targetHolder ?? addressRef.current;
     setRecords((prev) => {
-      const next = updater(prev);
-      if (typeof window !== "undefined") {
+      let base = prev;
+      if (typeof window !== "undefined" && holder) {
         try {
-          saveRecords(window.sessionStorage, next);
+          const fromStorage = loadRecords(window.localStorage, NETWORK_PASSPHRASE, Date.now(), holder);
+          base = mergeRecords(fromStorage, prev);
         } catch {
           // ignore storage error
         }
       }
-      return next;
+      const next = updater(base);
+      if (typeof window !== "undefined" && holder) {
+        try {
+          saveRecords(window.localStorage, next, holder);
+        } catch {
+          // ignore storage error
+        }
+      }
+      return holder === addressRef.current ? next : prev;
     });
   }, []);
 
-  // BroadcastChannel setup for cross-tab sync and claim coordination
+  // BroadcastChannel + storage event setup for cross-tab sync and poller handoff
   useEffect(() => {
-    if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") return;
+    if (typeof window === "undefined") return;
 
-    try {
-      const channel = new BroadcastChannel("oracledesk-tx");
-      channelRef.current = channel;
+    const handleStorage = (event: StorageEvent) => {
+      const holder = addressRef.current;
+      if (!holder || event.key !== storageKeyForHolder(holder)) return;
+      try {
+        const fresh = loadRecords(window.localStorage, NETWORK_PASSPHRASE, Date.now(), holder);
+        setRecords(fresh);
+      } catch {
+        // ignore storage error
+      }
+    };
+    window.addEventListener("storage", handleStorage);
 
-      channel.onmessage = (event: MessageEvent) => {
-        const data = event.data;
-        if (!data || typeof data !== "object") return;
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== "undefined") {
+      try {
+        channel = new BroadcastChannel("oracledesk-tx");
+        channelRef.current = channel;
 
-        if (data.type === "record_update" && isValidRecord(data.record, NETWORK_PASSPHRASE)) {
-          updateRecords((prev) => mergeRecords(prev, [data.record]));
-          if (data.record.state === "confirmed") {
-            invalidateFor(data.record);
+        channel.onmessage = (event: MessageEvent) => {
+          const data = event.data;
+          if (!data || typeof data !== "object") return;
+
+          if (data.type === "record_update" && isValidRecord(data.record, NETWORK_PASSPHRASE)) {
+            if (data.record.holder !== addressRef.current) return;
+            updateRecords((prev) => mergeRecords(prev, [data.record]), data.record.holder);
+            if (data.record.state === "confirmed") {
+              invalidateFor(data.record);
+            }
+          } else if (data.type === "record_dismiss" && data.hash) {
+            if (data.holder && data.holder !== addressRef.current) return;
+            updateRecords((prev) => prev.filter((r) => r.hash.toLowerCase() !== String(data.hash).toLowerCase()));
+          } else if (data.type === "poller_released") {
+            pollWakeRef.current?.();
           }
-        } else if (data.type === "record_dismiss" && data.hash) {
-          updateRecords((prev) => prev.filter((r) => r.hash.toLowerCase() !== String(data.hash).toLowerCase()));
-        }
-      };
-
-      return () => {
-        channel.close();
-        channelRef.current = null;
-      };
-    } catch {
-      // BroadcastChannel unavailable
+        };
+      } catch {
+        // BroadcastChannel unavailable
+      }
     }
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      channel?.close();
+      channelRef.current = null;
+    };
   }, [updateRecords, invalidateFor]);
 
-  // Polling loop for pending records
+  // Single-poller coordination loop for pending records (one poller per hash across tabs)
   useEffect(() => {
     let active = true;
+    const activePollers = new Map<string, AbortController>();
 
-    async function poll() {
+    const abortAllPollers = () => {
+      for (const [hash, controller] of activePollers.entries()) {
+        controller.abort();
+        activePollers.delete(hash);
+        channelRef.current?.postMessage({ type: "poller_released", hash });
+      }
+    };
+
+    const startPollerFor = (record: TrackedTx) => {
+      const hash = record.hash.toLowerCase();
+      if (!active || activePollers.has(hash)) return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+
+      const controller = new AbortController();
+      activePollers.set(hash, controller);
+
+      void withTxPollClaim(hash, controller.signal, async () => {
+        const server = rpcServer();
+        while (active && !controller.signal.aborted) {
+          if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+            break;
+          }
+          const current = recordsRef.current.find((r) => r.hash.toLowerCase() === hash);
+          if (!current || current.state !== "pending") break;
+
+          try {
+            const res = await server.getTransaction(current.hash);
+            const updated = evaluateTxStatus(current, res);
+            if (updated.state !== current.state || updated.ledger !== current.ledger) {
+              updateRecords((prev) => mergeRecords(prev, [updated]), updated.holder);
+              if (updated.state === "confirmed") {
+                invalidateFor(updated);
+              }
+              channelRef.current?.postMessage({ type: "record_update", record: updated });
+              if (updated.state !== "pending") break;
+            }
+          } catch {
+            // RPC hiccup, retry on next interval
+          }
+
+          await new Promise<void>((resolve) => {
+            if (controller.signal.aborted) {
+              resolve();
+              return;
+            }
+            const timer = setTimeout(resolve, TX_POLL_INTERVAL_MS);
+            controller.signal.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true },
+            );
+          });
+        }
+      }).finally(() => {
+        if (activePollers.get(hash) === controller) {
+          activePollers.delete(hash);
+        }
+        const stillPending = recordsRef.current.some(
+          (r) => r.hash.toLowerCase() === hash && r.state === "pending",
+        );
+        if (stillPending) {
+          channelRef.current?.postMessage({ type: "poller_released", hash });
+        }
+      });
+    };
+
+    const syncPollers = () => {
       if (!active) return;
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        abortAllPollers();
         return;
       }
-
       const pending = recordsRef.current.filter((r) => r.state === "pending");
-      if (pending.length === 0) {
-        isPollingRef.current = false;
-        return;
-      }
-
-      isPollingRef.current = true;
-      const server = rpcServer();
-
-      for (const record of pending) {
-        if (!active) break;
-        try {
-          const res = await server.getTransaction(record.hash);
-          const updated = evaluateTxStatus(record, res);
-          if (updated.state !== record.state || updated.ledger !== record.ledger) {
-            updateRecords((prev) => mergeRecords(prev, [updated]));
-            if (updated.state === "confirmed") {
-              invalidateFor(updated);
-            }
-            channelRef.current?.postMessage({ type: "record_update", record: updated });
-          }
-        } catch {
-          // RPC hiccup, skip this record for this tick
+      const pendingHashes = new Set(pending.map((r) => r.hash.toLowerCase()));
+      for (const [hash, controller] of activePollers.entries()) {
+        if (!pendingHashes.has(hash)) {
+          controller.abort();
+          activePollers.delete(hash);
         }
       }
-
-      if (active) {
-        // Backoff: 2s to 10s
-        pollerTimerRef.current = setTimeout(poll, 3000);
+      for (const record of pending) {
+        startPollerFor(record);
       }
-    }
+    };
 
-    // Handle document visibility change
-    function handleVisibilityChange() {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        if (pollerTimerRef.current) clearTimeout(pollerTimerRef.current);
-        poll();
-      }
-    }
+    pollWakeRef.current = syncPollers;
+
+    const handleVisibilityChange = () => {
+      syncPollers();
+    };
 
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", handleVisibilityChange);
     }
 
-    // Start polling immediately if pending records exist
-    poll();
+    // Periodic fallback check in case a poller tab crashed without broadcasting release
+    const watchdog = setInterval(syncPollers, TX_POLL_INTERVAL_MS);
+    syncPollers();
 
     return () => {
       active = false;
-      if (pollerTimerRef.current) {
-        clearTimeout(pollerTimerRef.current);
-        pollerTimerRef.current = null;
-      }
+      pollWakeRef.current = null;
+      clearInterval(watchdog);
+      abortAllPollers();
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", handleVisibilityChange);
       }
@@ -191,9 +290,8 @@ export function TransactionTrackerProvider({ children }: { children: React.React
         state: "pending",
         submittedAt: Date.now(),
       };
-      updateRecords((prev) => mergeRecords(prev, [newRecord]));
+      updateRecords((prev) => mergeRecords(prev, [newRecord]), newRecord.holder);
       channelRef.current?.postMessage({ type: "record_update", record: newRecord });
-
     },
     [updateRecords],
   );
@@ -202,7 +300,7 @@ export function TransactionTrackerProvider({ children }: { children: React.React
     (hash: string) => {
       const lower = hash.toLowerCase();
       updateRecords((prev) => prev.filter((r) => r.hash.toLowerCase() !== lower));
-      channelRef.current?.postMessage({ type: "record_dismiss", hash: lower });
+      channelRef.current?.postMessage({ type: "record_dismiss", hash: lower, holder: addressRef.current });
     },
     [updateRecords],
   );

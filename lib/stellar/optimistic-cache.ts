@@ -2,9 +2,10 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { applyBuy, applySell, applyRedeem, balanceDelta, type Stamped, type TradeKind } from "./optimistic";
 import type { Position } from "./generated/market-core";
 import type { OutcomeTag } from "./clients";
+import { stellarKeys } from "./hooks/keys";
 
-export const positionKey = (id: string, holder: string) => ["stellar", "position", id, holder] as const;
-export const balanceKey = (holder: string) => ["stellar", "usdcBalance", holder] as const;
+export const positionKey = stellarKeys.position;
+export const balanceKey = stellarKeys.balance;
 interface ReconcileJob { timer?: ReturnType<typeof setTimeout>; stop(): void }
 const timers = new WeakMap<QueryClient, Map<string, ReconcileJob>>();
 

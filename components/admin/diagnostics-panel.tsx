@@ -15,7 +15,7 @@ import { useTraceCount } from "@/lib/hooks/useStellar";
 import { DIAGNOSTICS_TOLERANCE_BPS } from "@/lib/stellar/config";
 
 const SourceTag = ({ source }: { source: "chain" | "backend" }) => (
-  <span className={`ml-1 text-[9px] font-bold uppercase px-1 rounded ${source === "chain" ? "bg-secondary-container text-on-secondary-container" : "bg-surface-container-highest text-on-surface-variant"}`}>
+  <span className={`ms-1 text-[9px] font-bold uppercase px-1 rounded ${source === "chain" ? "bg-secondary-container text-on-secondary-container" : "bg-surface-container-highest text-on-surface-variant"}`}>
     {source}
   </span>
 );
@@ -78,6 +78,9 @@ export function DiagnosticsPanel() {
           <p className="text-sm text-on-surface-variant">
             Compares the backend/indexer with the contracts. Every value is tagged with its source; nothing here is chain data unless it says so.
           </p>
+          <Link href="/admin/reconciliation" className="text-primary underline text-xs">
+            Latest backend run
+          </Link>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -200,7 +203,7 @@ export function DiagnosticsPanel() {
           <p className="p-6 text-sm text-secondary">No discrepancies in the sampled markets (tolerance {tolerance} bps).</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full text-start text-sm">
               <thead className="bg-surface-container-low text-on-surface-variant text-[11px] uppercase tracking-wide">
                 <tr>
                   <th className="px-4 py-2">Kind</th>
@@ -214,14 +217,17 @@ export function DiagnosticsPanel() {
               <tbody className="divide-y divide-outline-variant">
                 {diffs.map((diff, index) => (
                   <tr key={`${diff.kind}-${diff.onChainId}-${diff.backendId ?? index}`}>
-                    <td className="px-4 py-2 font-data-mono text-xs">{diff.kind}</td>
+                    <td className="px-4 py-2 font-data-mono text-xs">
+                      {diff.driftClass ?? diff.kind}
+                      {!diff.driftClass && <span className="ms-1 text-[9px] uppercase text-on-surface-variant">(frontend-only)</span>}
+                    </td>
                     <td className="px-4 py-2 font-data-mono">{diff.onChainId}</td>
                     <td className="px-4 py-2 font-data-mono">{diff.backendId ?? "—"}</td>
                     <td className="px-4 py-2">{diff.chainValue ?? "—"}<SourceTag source="chain" /></td>
                     <td className="px-4 py-2">
                       {diff.backendValue ?? "—"}<SourceTag source="backend" />
-                      {diff.seedOnly && <span className="ml-1 text-[10px] text-on-surface-variant">(seed only)</span>}
-                      {diff.deltaBps !== undefined && <span className="ml-1 text-[10px] text-tertiary">Δ{diff.deltaBps} bps</span>}
+                      {diff.seedOnly && <span className="ms-1 text-[10px] text-on-surface-variant">(seed only)</span>}
+                      {diff.deltaBps !== undefined && <span className="ms-1 text-[10px] text-tertiary">Δ{diff.deltaBps} bps</span>}
                     </td>
                     <td className="px-4 py-2">
                       <Link href={diffLink(diff)} className="underline text-primary">Open</Link>

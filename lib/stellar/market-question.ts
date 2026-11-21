@@ -1,10 +1,19 @@
 import { bytesToHex } from "./typed-call";
 import { normalizeHash, raceGateways, type RaceOptions } from "./trace-core";
 import { IPFS_GATEWAYS, DEFAULT_IPFS_MAX_TRACE_BYTES } from "./config";
-import { canonicalBytes, questionHash } from "./market-create";
-import { sha256Hex } from "./trace";
+import {
+  parseQuestionDocument,
+  type ParsedQuestionDoc,
+} from "./question-parser";
 
 export type QuestionIntegrityStatus = "verified" | "mismatch" | "unavailable" | "not-committed";
+
+export interface QuestionMismatchDetails {
+  questionMismatch?: { displayed: string; committed: string };
+  closeTimeMismatch?: { chain: number; doc: number };
+  categoryMismatch?: { chain: string | number; doc: string | number };
+  resolutionHashMismatch?: { chain: string; doc: string };
+}
 
 export interface QuestionIntegrityCheck {
   status: QuestionIntegrityStatus;
@@ -12,6 +21,10 @@ export interface QuestionIntegrityCheck {
   committedQuestion: string | null;
   committedHash: string | null;
   computedHash: string | null;
+  parsedDoc?: ParsedQuestionDoc | null;
+  mismatches?: QuestionMismatchDetails;
+  isPlainText?: boolean;
+  chainChecked: boolean;
   reason?: string;
   metaUri?: string | null;
 }
@@ -23,6 +36,14 @@ export interface MarketQuestionCheckInput {
   gateways?: readonly string[];
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /** Explicit flag indicating whether on-chain data is present. If false, verification is unavailable. */
+  hasChainRead?: boolean;
+  /** On-chain market state for cross-checking close time, category, and resolution hash. */
+  chainMarket?: {
+    close_time?: bigint | number;
+    category?: unknown;
+    resolution_hash?: Buffer | Uint8Array | string | null;
+  } | null;
 }
 
 /** Check if a hash is empty, undefined, or all zeroes (32-byte zero buffer or 64 zero hex chars). */
@@ -32,7 +53,6 @@ export function isZeroOrEmptyHash(hash: Buffer | Uint8Array | string | null | un
     const clean = normalizeHash(hash);
     return clean.length === 0 || /^0{64}$/.test(clean);
   }
-  // Buffer or Uint8Array
   if (hash.length === 0) return true;
   for (let i = 0; i < hash.length; i++) {
     if (hash[i] !== 0) return false;
@@ -46,15 +66,23 @@ export function formatHashHex(hash: Buffer | Uint8Array | string | null | undefi
   return bytesToHex(hash);
 }
 
-// In-memory cache for fast repeated lookups across market lists
+// Bounded in-memory cache keyed strictly by committedHash (max 250 items, LRU)
+const MAX_CACHE_SIZE = 250;
 const questionCheckCache = new Map<string, QuestionIntegrityCheck>();
 
-export function getCachedQuestionCheck(cacheKey: string): QuestionIntegrityCheck | undefined {
-  return questionCheckCache.get(cacheKey);
+export function getCachedQuestionCheck(committedHash: string): QuestionIntegrityCheck | undefined {
+  if (!committedHash) return undefined;
+  return questionCheckCache.get(committedHash);
 }
 
-export function setCachedQuestionCheck(cacheKey: string, result: QuestionIntegrityCheck): void {
-  questionCheckCache.set(cacheKey, result);
+export function setCachedQuestionCheck(committedHash: string, result: QuestionIntegrityCheck): void {
+  // Never cache failed or unverified results as verified
+  if (!committedHash || result.status !== "verified") return;
+  if (questionCheckCache.size >= MAX_CACHE_SIZE) {
+    const oldestKey = questionCheckCache.keys().next().value;
+    if (oldestKey) questionCheckCache.delete(oldestKey);
+  }
+  questionCheckCache.set(committedHash, result);
 }
 
 export function clearQuestionCheckCache(): void {
@@ -62,21 +90,78 @@ export function clearQuestionCheckCache(): void {
 }
 
 /**
- * Verifies that the displayed market question text matches the on-chain question_hash.
+ * Cross-checks document fields against on-chain market fields.
+ */
+function crossCheckWithChain(
+  doc: ParsedQuestionDoc,
+  chainMarket?: MarketQuestionCheckInput["chainMarket"]
+): QuestionMismatchDetails | undefined {
+  if (!chainMarket) return undefined;
+  const mismatches: QuestionMismatchDetails = {};
+  let found = false;
+
+  // 1. Close time cross-check
+  if (chainMarket.close_time !== undefined && doc.closeTime !== null && doc.closeTime !== undefined) {
+    const chainClose = Number(chainMarket.close_time);
+    if (chainClose > 0 && Math.abs(chainClose - doc.closeTime) > 60) {
+      mismatches.closeTimeMismatch = { chain: chainClose, doc: doc.closeTime };
+      found = true;
+    }
+  }
+
+  // 2. Category cross-check
+  if (chainMarket.category !== undefined && chainMarket.category !== null) {
+    const chainCat =
+      typeof chainMarket.category === "object" && chainMarket.category !== null && "tag" in chainMarket.category
+        ? String((chainMarket.category as { tag: string }).tag).toLowerCase()
+        : String(chainMarket.category).toLowerCase();
+    const docCat = String(doc.category ?? doc.contractCategory ?? "").toLowerCase();
+    if (chainCat && docCat && !chainCat.includes(docCat) && !docCat.includes(chainCat)) {
+      mismatches.categoryMismatch = { chain: String(chainMarket.category), doc: doc.category ?? doc.contractCategory ?? "" };
+      found = true;
+    }
+  }
+
+  // 3. Resolution hash cross-check
+  if (chainMarket.resolution_hash && doc.resolutionHash) {
+    const chainResHash = formatHashHex(chainMarket.resolution_hash);
+    const docResHash = normalizeHash(doc.resolutionHash);
+    if (chainResHash && docResHash && chainResHash !== docResHash && !isZeroOrEmptyHash(chainResHash)) {
+      mismatches.resolutionHashMismatch = { chain: chainResHash, doc: docResHash };
+      found = true;
+    }
+  }
+
+  return found ? mismatches : undefined;
+}
+
+/**
+ * Verifies that the market question document matches the on-chain question_hash commitment.
  *
- * 1. Checks on-chain question_hash commitment (if zero/empty -> "not-committed")
- * 2. Fetches the committed question document from meta_uri (via IPFS gateways)
- * 3. Hashes the received bytes and compares against question_hash
- * 4. Extracts the canonical question text from the document and compares with displayedQuestion
- *
- * Degrades clearly into:
- * - "verified": document matches on-chain question_hash AND displayed text matches document text
- * - "mismatch": document hash doesn't match question_hash OR displayed text doesn't match committed text
- * - "unavailable": IPFS gateway down, dry-run market, or meta_uri unreachable
- * - "not-committed": market was created without an on-chain question_hash commitment
+ * Enforces:
+ * 1. Trust requirement: If on-chain read is missing, verification is marked unavailable.
+ * 2. On-chain question_hash commitment check.
+ * 3. Fetching raw bytes via IPFS gateways and checking SHA-256 against commitment.
+ * 4. Strict-but-forward-compatible parsing for all supported document schemas.
+ * 5. Cross-checking close time, category, and resolution hash against chain state.
  */
 export async function verifyMarketQuestion(input: MarketQuestionCheckInput): Promise<QuestionIntegrityCheck> {
   const displayedQuestion = input.displayedQuestion.trim();
+
+  // Trust check: If chain read is explicitly missing, do NOT trust backend data
+  if (input.hasChainRead === false) {
+    return {
+      status: "unavailable",
+      displayedQuestion,
+      committedQuestion: null,
+      committedHash: null,
+      computedHash: null,
+      chainChecked: false,
+      reason: "On-chain state unavailable; cannot verify question commitment",
+      metaUri: input.metaUri ?? null,
+    };
+  }
+
   const committedHash = formatHashHex(input.questionHash);
 
   // 1. Check if hash was committed on-chain
@@ -87,9 +172,16 @@ export async function verifyMarketQuestion(input: MarketQuestionCheckInput): Pro
       committedQuestion: null,
       committedHash: null,
       computedHash: null,
+      chainChecked: true,
       reason: "No on-chain question commitment (question_hash is empty or zero)",
       metaUri: input.metaUri ?? null,
     };
+  }
+
+  // Check cache (keyed by committedHash)
+  const cached = getCachedQuestionCheck(committedHash);
+  if (cached) {
+    return cached;
   }
 
   // 2. Check metadata URI
@@ -101,6 +193,7 @@ export async function verifyMarketQuestion(input: MarketQuestionCheckInput): Pro
       committedQuestion: null,
       committedHash,
       computedHash: null,
+      chainChecked: true,
       reason: "No metadata URI (meta_uri is empty)",
       metaUri: null,
     };
@@ -133,17 +226,18 @@ export async function verifyMarketQuestion(input: MarketQuestionCheckInput): Pro
         committedQuestion: null,
         committedHash,
         computedHash,
+        chainChecked: true,
         reason: "IPFS document hash does not match on-chain question_hash",
         metaUri,
       };
     } else {
-      // unavailable
       return {
         status: "unavailable",
         displayedQuestion,
         committedQuestion: null,
         committedHash,
         computedHash: null,
+        chainChecked: true,
         reason: ("reason" in result.check && result.check.reason) || "IPFS gateway unreachable or document unavailable",
         metaUri,
       };
@@ -155,83 +249,64 @@ export async function verifyMarketQuestion(input: MarketQuestionCheckInput): Pro
       committedQuestion: null,
       committedHash,
       computedHash: null,
+      chainChecked: true,
       reason: err instanceof Error ? err.message : "Failed to fetch question document",
       metaUri,
     };
   }
 
-  // 4. Parse document and check canonical bytes & question text
-  let doc: unknown;
+  // 4. Parse document using versioned parser
+  const text = new TextDecoder().decode(rawBytes);
+  let parsedPayload: unknown;
   try {
-    const text = new TextDecoder().decode(rawBytes);
-    doc = JSON.parse(text);
+    parsedPayload = JSON.parse(text);
   } catch {
-    // Plain text document fallback
-    const committedQuestion = new TextDecoder().decode(rawBytes).trim();
-    const textMatches = committedQuestion === displayedQuestion;
-    return {
-      status: textMatches ? "verified" : "mismatch",
-      displayedQuestion,
-      committedQuestion,
-      committedHash,
-      computedHash,
-      reason: textMatches ? undefined : "Committed text does not match displayed text",
-      metaUri,
-    };
+    // Deliberately accept plain-text documents as fallback
+    parsedPayload = text;
   }
 
-  if (typeof doc !== "object" || doc === null) {
+  const parseRes = parseQuestionDocument(parsedPayload);
+  if (!parseRes.ok) {
     return {
       status: "mismatch",
       displayedQuestion,
       committedQuestion: null,
       committedHash,
       computedHash,
-      reason: "IPFS document is not a valid JSON object",
+      chainChecked: true,
+      reason: parseRes.reason,
       metaUri,
     };
   }
 
-  const docRecord = doc as Record<string, unknown>;
-  const committedQuestion = String(docRecord.question ?? docRecord.title ?? docRecord.text ?? "").trim();
+  const doc = parseRes.doc;
+  const committedQuestion = doc.question;
 
-  // If rawBytes hash didn't match directly, check canonical questionHash(doc)
-  if (computedHash !== committedHash) {
-    const canonicalDocHash = await questionHash(docRecord);
-    if (canonicalDocHash === committedHash) {
-      computedHash = canonicalDocHash;
-    } else {
-      return {
-        status: "mismatch",
-        displayedQuestion,
-        committedQuestion,
-        committedHash,
-        computedHash,
-        reason: "Canonical question document hash does not match on-chain commitment",
-        metaUri,
-      };
-    }
-  }
+  // Cross-check with chain fields
+  const mismatches = crossCheckWithChain(doc, input.chainMarket) ?? {};
 
-  // Compare question text
+  // Check if displayed question differs from committed question
   if (committedQuestion.toLowerCase() !== displayedQuestion.toLowerCase()) {
-    return {
-      status: "mismatch",
-      displayedQuestion,
-      committedQuestion,
-      committedHash,
-      computedHash,
-      reason: "Displayed question differs from canonical on-chain commitment",
-      metaUri,
+    mismatches.questionMismatch = {
+      displayed: displayedQuestion,
+      committed: committedQuestion,
     };
   }
 
-  return {
+  const result: QuestionIntegrityCheck = {
     status: "verified",
     displayedQuestion,
     committedQuestion,
     committedHash,
     computedHash,
+    parsedDoc: doc,
+    isPlainText: doc.isPlainText,
+    mismatches: Object.keys(mismatches).length > 0 ? mismatches : undefined,
+    chainChecked: true,
     metaUri,
   };
+
+  // Cache verified result
+  setCachedQuestionCheck(committedHash, result);
+  return result;
 }

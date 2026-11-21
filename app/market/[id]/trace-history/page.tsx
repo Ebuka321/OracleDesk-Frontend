@@ -8,6 +8,10 @@ import { TraceHistoryViewer } from "@/components/trace-history-viewer";
 import { TraceDiff, fetchTraceVersion, computeTraceDiff } from "@/lib/services/trace-history";
 import { listTraces } from "@/lib/api/traces";
 
+export function generateStaticParams() {
+  return [{ id: "fallback" }];
+}
+
 export default function MarketTraceHistoryPage() {
   const params = useParams();
   const marketId = params.id as string;

@@ -6,6 +6,7 @@ import {
   ComposedChart,
   Area,
   Line,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -22,6 +23,20 @@ import {
   type ChartPeriod,
   type ChartRow,
 } from "@/lib/charts/bucket";
+import {
+  enumerateOnChainMarketTraces,
+  type OnChainMarketTrace,
+} from "@/lib/stellar/market-audit";
+import { verifyTraceInWorker, type TraceCheck } from "@/lib/stellar/trace";
+import {
+  defaultTraceVerificationCache,
+  type TraceVerificationCache,
+} from "@/lib/charts/trace-overlay-cache";
+import {
+  alignTracesToBuckets,
+  publishedMsToUnixSeconds,
+  type TraceOverlayMarker,
+} from "@/lib/charts/trace-overlay";
 
 export const PRICE_CHART_HEIGHT = 340;
 
@@ -56,15 +71,40 @@ const PriceTooltip = ({ active, payload, label, period }: TooltipProps) => {
   );
 };
 
-/** Step-line price chart fed by real Soroban trade events. The chart body
- * mounts only on the client so recharts never measures a zero-size container
- * during prerender; the worker keeps bucketing off the main thread. */
-export default function PriceChart({ points, defaultPeriod = "1D" }: { points: readonly PricePoint[]; defaultPeriod?: ChartPeriod }) {
+export interface PriceChartProps {
+  points: readonly PricePoint[];
+  defaultPeriod?: ChartPeriod;
+  /** Optional on-chain market id to lazily load and verify reasoning-registry agent traces. */
+  onChainMarketId?: string | null;
+  /** Optional pre-supplied traces (overrides on-chain enumeration, useful for SSR/tests). */
+  traces?: readonly OnChainMarketTrace[];
+  /** Injectable trace verifier for tests; defaults to `verifyTraceInWorker`. */
+  verifyTrace?: (trace: OnChainMarketTrace, signal: AbortSignal) => Promise<TraceCheck>;
+  /** Injectable verification cache; defaults to `defaultTraceVerificationCache`. */
+  verificationCache?: TraceVerificationCache;
+}
+
+/** Step-line price chart fed by real Soroban trade events, with an optional
+ * verified agent-estimate overlay layer (Issue #243). The chart body mounts
+ * only on the client so recharts never measures a zero-size container during
+ * prerender; the worker keeps bucketing off the main thread. */
+export default function PriceChart({
+  points,
+  defaultPeriod = "1D",
+  onChainMarketId,
+  traces: externalTraces,
+  verifyTrace,
+  verificationCache = defaultTraceVerificationCache,
+}: PriceChartProps) {
   const [period, setPeriod] = useState<ChartPeriod>(defaultPeriod);
   const [rows, setRows] = useState<ChartRow[]>([]);
   const [mounted, setMounted] = useState(false);
+  const [enumeratedTraces, setEnumeratedTraces] = useState<OnChainMarketTrace[]>([]);
+  const [checks, setChecks] = useState<Map<string, TraceCheck>>(() => new Map());
+  const [activeMarkerId, setActiveMarkerId] = useState<string | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
+  const markerRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => {
     // Defer past the effect's synchronous window: the chart mounts after the
@@ -91,7 +131,7 @@ export default function PriceChart({ points, defaultPeriod = "1D" }: { points: r
   }, []);
 
   const inputs = useMemo<BucketInput[]>(
-    () => points.map(point => ({ t: point.time, yesBps: point.yesBps.toString(), ...(point.kind ? { kind: point.kind } : {}) })),
+    () => points.map((point) => ({ t: point.time, yesBps: point.yesBps.toString(), ...(point.kind ? { kind: point.kind } : {}) })),
     [points],
   );
 
@@ -102,7 +142,96 @@ export default function PriceChart({ points, defaultPeriod = "1D" }: { points: r
     else setRows(handleRequest(request).rows);
   }, [inputs, period]);
 
-  const resolved = rows.length ? [...rows].reverse().find(row => row.kind === "resolved") : undefined;
+  // Lazily enumerate on-chain traces when onChainMarketId is supplied and no external traces were provided.
+  useEffect(() => {
+    if (externalTraces || !onChainMarketId || !/^\d+$/.test(onChainMarketId)) {
+      setEnumeratedTraces([]);
+      return;
+    }
+    const controller = new AbortController();
+    void enumerateOnChainMarketTraces(onChainMarketId, undefined, { signal: controller.signal })
+      .then((list) => {
+        if (!controller.signal.aborted) setEnumeratedTraces(list);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setEnumeratedTraces([]);
+      });
+    return () => controller.abort();
+  }, [onChainMarketId, externalTraces]);
+
+  const allTraces = externalTraces ?? enumeratedTraces;
+
+  // Lazy, visible-range-first verification with bounded concurrency and cancellation on period change / unmount.
+  useEffect(() => {
+    if (!allTraces.length || !rows.length) return;
+    const minT = rows[0].t;
+    const maxT = rows[rows.length - 1].t;
+    const visibleTraces = allTraces.filter((tr) => {
+      const sec = publishedMsToUnixSeconds(tr.publishedAt);
+      return sec >= minT && sec <= maxT;
+    });
+    if (!visibleTraces.length) return;
+
+    const controller = new AbortController();
+    const runVerify =
+      verifyTrace ??
+      ((tr: OnChainMarketTrace, sig: AbortSignal) => verifyTraceInWorker(tr.ipfsCid, tr.traceHash, { signal: sig }));
+
+    for (const trace of visibleTraces) {
+      const cached = verificationCache.get(trace.onChainTraceId, trace.traceHash);
+      if (cached) {
+        setChecks((prev) => {
+          if (prev.get(trace.onChainTraceId) === cached) return prev;
+          const next = new Map(prev);
+          next.set(trace.onChainTraceId, cached);
+          return next;
+        });
+        continue;
+      }
+
+      void verificationCache
+        .verify(trace.onChainTraceId, trace.traceHash, (sig) => runVerify(trace, sig), controller.signal)
+        .then((check) => {
+          if (controller.signal.aborted) return;
+          setChecks((prev) => {
+            const next = new Map(prev);
+            next.set(trace.onChainTraceId, check);
+            return next;
+          });
+        })
+        .catch(() => {
+          // Aborted or failed; unverified hollow marker remains on the price line
+        });
+    }
+
+    return () => controller.abort();
+  }, [allTraces, rows, period, verifyTrace, verificationCache]);
+
+  const { markers, clusters } = useMemo(
+    () => alignTracesToBuckets(allTraces, rows, period, checks),
+    [allTraces, rows, period, checks],
+  );
+
+  const activeMarker: TraceOverlayMarker | null = useMemo(
+    () => markers.find((m) => m.id === activeMarkerId) ?? null,
+    [markers, activeMarkerId],
+  );
+
+  const resolved = rows.length ? [...rows].reverse().find((row) => row.kind === "resolved") : undefined;
+
+  const handleMarkerKeyDown = (index: number, event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      const next = (index + 1) % markers.length;
+      markerRefs.current[next]?.focus();
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      const prev = (index - 1 + markers.length) % markers.length;
+      markerRefs.current[prev]?.focus();
+    } else if (event.key === "Escape") {
+      setActiveMarkerId(null);
+    }
+  };
 
   return (
     <div className="bg-surface-container-lowest border border-outline-variant p-6 rounded relative overflow-hidden">
@@ -112,11 +241,11 @@ export default function PriceChart({ points, defaultPeriod = "1D" }: { points: r
           ON-CHAIN PRICE · {rows.length ? `${rows.length} BUCKETS` : "NO TRADES YET"}
         </div>
         <div className="flex gap-1">
-          {CHART_PERIODS.map(option => (
+          {CHART_PERIODS.map((option) => (
             <button
               key={option}
               onClick={() => setPeriod(option)}
-              className={`px-3 py-1 rounded font-label-caps text-label-caps transition-all ${
+              className={`px-3 py-1 rounded font-label-caps text-label-caps motion-reduce:transition-none transition-all ${
                 period === option
                   ? "bg-primary text-primary-foreground"
                   : "bg-surface-container text-on-surface-variant hover:bg-surface-container-high"
@@ -128,8 +257,8 @@ export default function PriceChart({ points, defaultPeriod = "1D" }: { points: r
         </div>
       </div>
 
-      {/* Legend */}
-      <div className="flex items-center gap-4 mb-4">
+      {/* Legend (shape + fill distinguish verified vs unverified, never colour alone) */}
+      <div className="flex flex-wrap items-center gap-4 mb-4">
         <div className="flex items-center gap-1.5">
           <span className="w-3 h-0.5 rounded-full inline-block" style={{ background: "var(--chart-yes)" }} />
           <span className="font-label-caps text-[10px] text-on-surface-variant">YES</span>
@@ -138,15 +267,35 @@ export default function PriceChart({ points, defaultPeriod = "1D" }: { points: r
           <span className="w-3 h-0.5 rounded-full inline-block" style={{ background: "var(--chart-no)" }} />
           <span className="font-label-caps text-[10px] text-on-surface-variant">NO</span>
         </div>
+        {markers.length > 0 && (
+          <>
+            <div className="flex items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className="w-2.5 h-2.5 rounded-full inline-block"
+                style={{ background: "var(--chart-yes)", border: "1.5px solid var(--chart-yes)" }}
+              />
+              <span className="font-label-caps text-[10px] text-on-surface-variant">VERIFIED ESTIMATE</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className="w-2.5 h-2.5 rounded-full inline-block bg-surface-container-lowest"
+                style={{ border: "1.5px solid var(--chart-axis)" }}
+              />
+              <span className="font-label-caps text-[10px] text-on-surface-variant">UNVERIFIED TRACE</span>
+            </div>
+          </>
+        )}
         {resolved && (
-          <div className="flex items-center gap-1.5 ml-2">
+          <div className="flex items-center gap-1.5 ms-2">
             <span className="w-4 h-0.5 border-t-2 border-dashed inline-block" style={{ borderColor: "var(--chart-axis)" }} />
             <span className="font-label-caps text-[10px]" style={{ color: "var(--chart-axis)" }}>RESOLVED</span>
           </div>
         )}
       </div>
 
-      <div className="h-[340px] w-full">
+      <div className="h-[340px] w-full relative">
         {mounted && rows.length > 0 ? (
           <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={PRICE_CHART_HEIGHT}>
             <ComposedChart data={rows} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
@@ -199,6 +348,40 @@ export default function PriceChart({ points, defaultPeriod = "1D" }: { points: r
                 activeDot={{ r: 4, fill: "var(--chart-yes)" }}
                 isAnimationActive={false}
               />
+              {/* Confidence-interval whiskers for verified traces only */}
+              {markers.map((marker) =>
+                marker.status === "verified" &&
+                marker.ciLowerPercent !== undefined &&
+                marker.ciUpperPercent !== undefined ? (
+                  <ReferenceLine
+                    key={`ci-${marker.id}`}
+                    segment={[
+                      { x: marker.bucketT, y: marker.ciLowerPercent },
+                      { x: marker.bucketT, y: marker.ciUpperPercent },
+                    ]}
+                    stroke="var(--chart-yes)"
+                    strokeWidth={2}
+                    strokeOpacity={0.6}
+                  />
+                ) : null,
+              )}
+              {/* Agent trace markers: filled at estimate when verified, hollow on price line when unverified */}
+              {markers.map((marker) => (
+                <ReferenceDot
+                  key={marker.id}
+                  x={marker.bucketT}
+                  y={marker.y}
+                  r={marker.status === "verified" ? 5 : 4.5}
+                  fill={marker.status === "verified" ? "var(--chart-yes)" : "var(--surface-container-lowest, #fff)"}
+                  stroke={marker.status === "verified" ? "var(--chart-yes)" : "var(--chart-axis)"}
+                  strokeWidth={2}
+                  label={
+                    marker.clusterSize > 1 && marker.clusterIndex === 0
+                      ? { value: String(marker.clusterSize), position: "top", fontSize: 9, fill: "var(--chart-axis)" }
+                      : undefined
+                  }
+                />
+              ))}
             </ComposedChart>
           </ResponsiveContainer>
         ) : (
@@ -210,7 +393,113 @@ export default function PriceChart({ points, defaultPeriod = "1D" }: { points: r
             </p>
           </div>
         )}
+
+        {/* Focus/hover popover for the active trace marker */}
+        {activeMarker && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="absolute top-2 right-2 z-10 bg-on-background text-surface px-3 py-2 rounded shadow-xl font-data-mono text-[11px] border border-primary/20 max-w-xs"
+          >
+            <p className="font-bold">{activeMarker.agentDisplay}</p>
+            <p className="text-outline">{formatTime(activeMarker.publishedSec, period)}</p>
+            {activeMarker.status === "verified" && activeMarker.estimatePercent !== undefined ? (
+              <>
+                <p style={{ color: "var(--chart-yes)" }}>
+                  Verified estimate: {activeMarker.estimatePercent.toFixed(1)}%
+                </p>
+                {activeMarker.ciLowerPercent !== undefined && activeMarker.ciUpperPercent !== undefined && (
+                  <p className="text-outline">
+                    CI: {activeMarker.ciLowerPercent.toFixed(1)}% – {activeMarker.ciUpperPercent.toFixed(1)}%
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-outline">Unverified trace ({activeMarker.unverifiedReason ?? "unverified"})</p>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Keyboard-accessible marker strip (ArrowLeft / ArrowRight navigation, visible focus ring, focus+hover popover) */}
+      {markers.length > 0 && (
+        <div
+          role="group"
+          aria-label="Agent reasoning trace markers"
+          className="mt-3 flex flex-wrap gap-1.5"
+        >
+          {markers.map((marker, idx) => (
+            <button
+              key={marker.id}
+              ref={(el) => {
+                markerRefs.current[idx] = el;
+              }}
+              type="button"
+              aria-label={marker.ariaLabel}
+              onFocus={() => setActiveMarkerId(marker.id)}
+              onBlur={() => setActiveMarkerId((curr) => (curr === marker.id ? null : curr))}
+              onMouseEnter={() => setActiveMarkerId(marker.id)}
+              onMouseLeave={() => setActiveMarkerId((curr) => (curr === marker.id ? null : curr))}
+              onKeyDown={(e) => handleMarkerKeyDown(idx, e)}
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded border border-outline-variant bg-surface-container text-[10px] font-data-mono text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary motion-reduce:transition-none"
+            >
+              <span
+                aria-hidden="true"
+                className="w-2 h-2 rounded-full inline-block"
+                style={
+                  marker.status === "verified"
+                    ? { background: "var(--chart-yes)", border: "1.5px solid var(--chart-yes)" }
+                    : { background: "transparent", border: "1.5px solid var(--chart-axis)" }
+                }
+              />
+              <span>{marker.agentDisplay}</span>
+              {marker.status === "verified" && marker.estimatePercent !== undefined && (
+                <span>{marker.estimatePercent.toFixed(1)}%</span>
+              )}
+              {marker.clusterSize > 1 && marker.clusterIndex === 0 && (
+                <span className="text-on-surface-variant">({clusters.find((c) => c.bucketT === marker.bucketT)?.count})</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Visually hidden text alternative for screen readers */}
+      {markers.length > 0 && (
+        <table className="sr-only">
+          <caption>Agent reasoning estimates overlaid on price chart</caption>
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Time</th>
+              <th>Status</th>
+              <th>Estimate</th>
+              <th>Confidence Interval</th>
+            </tr>
+          </thead>
+          <tbody>
+            {markers.map((marker) => (
+              <tr key={`sr-${marker.id}`}>
+                <td>{marker.agentDisplay}</td>
+                <td>{new Date(marker.publishedSec * 1000).toISOString()}</td>
+                <td>{marker.status === "verified" ? "Verified" : "Unverified"}</td>
+                <td>
+                  {marker.status === "verified" && marker.estimatePercent !== undefined
+                    ? `${marker.estimatePercent.toFixed(1)}%`
+                    : "Not displayed"}
+                </td>
+                <td>
+                  {marker.status === "verified" &&
+                  marker.ciLowerPercent !== undefined &&
+                  marker.ciUpperPercent !== undefined
+                    ? `${marker.ciLowerPercent.toFixed(1)}% to ${marker.ciUpperPercent.toFixed(1)}%`
+                    : "None"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

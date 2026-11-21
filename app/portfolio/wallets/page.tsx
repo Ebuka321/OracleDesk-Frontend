@@ -55,7 +55,7 @@ const TransactionRow = ({ type, icon, iconColor, asset, amount, amountColor, sta
       <span className={`${statusClass} text-[10px] px-2 py-0.5 rounded font-bold`}>{status}</span>
     </td>
     <td className="px-4 py-4 text-on-surface-variant text-[12px]">{date}</td>
-    <td className="px-4 py-4 text-right">
+    <td className="px-4 py-4 text-end">
       <span className="text-on-surface-variant font-label-caps text-[11px]">—</span>
     </td>
   </tr>
@@ -220,7 +220,7 @@ export default function WalletsPage() {
             )}
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full text-start border-collapse">
               <thead>
                 <tr className="bg-surface text-on-surface-variant font-label-caps text-[11px] border-b border-outline-variant uppercase tracking-wider">
                   <th className="px-4 py-3 font-bold">TYPE</th>
@@ -228,7 +228,7 @@ export default function WalletsPage() {
                   <th className="px-4 py-3 font-bold">AMOUNT</th>
                   <th className="px-4 py-3 font-bold">STATUS</th>
                   <th className="px-4 py-3 font-bold">DATE</th>
-                  <th className="px-4 py-3 font-bold text-right">ACTION</th>
+                  <th className="px-4 py-3 font-bold text-end">ACTION</th>
                 </tr>
               </thead>
               <tbody className="font-body-md">

@@ -34,7 +34,7 @@ function MarketTape({ id, limit, compact }: { id: string; limit: number; compact
     {query.isError && <p role="alert" className="text-sm text-error">Couldn&apos;t load trades. <button onClick={() => void query.refetch()} className="underline">Retry</button></p>}
     {!query.isPending && !query.isError && rows.length === 0 && <p className="py-6 text-sm text-on-surface-variant">No trades on this market in the RPC&apos;s retention window.</p>}
     {rows.length > 0 && <div className="overflow-auto" style={{ maxHeight: ROW_HEIGHT * VISIBLE + 34 }} onScroll={e => setScrollTop(e.currentTarget.scrollTop)}>
-      <table aria-rowcount={rows.length + 1} className="w-full text-xs text-left whitespace-nowrap">
+      <table aria-rowcount={rows.length + 1} className="w-full text-xs text-start whitespace-nowrap">
         <thead className="sticky top-0 bg-surface-container-lowest z-10"><tr>{titles.map(title => <th key={title} scope="col" className="px-2 py-2">{title}</th>)}</tr></thead>
         <tbody className="font-data-mono">
           {first > 0 && <tr aria-hidden="true"><td colSpan={9} style={{ height: first * ROW_HEIGHT }} /></tr>}
@@ -42,12 +42,12 @@ function MarketTape({ id, limit, compact }: { id: string; limit: number; compact
             const previous = rows[first + offset + 1]?.yesBpsAfter;
             const movement = previous === undefined ? null : row.yesBpsAfter - previous;
             return <tr key={row.id} aria-rowindex={first + offset + 2} style={{ height: ROW_HEIGHT }} className="border-b border-outline-variant/40">
-              <td className="px-2"><time dateTime={row.closedAt ?? undefined} title={row.closedAt ?? "Ledger close time has not arrived yet"}>{row.closedAt ? relativeTime(row.closedAt, query.dataUpdatedAt) : `Ledger ${row.ledger}`}</time>{row.origin === "socket" && <span className="ml-1 text-on-surface-variant">live</span>}</td>
+              <td className="px-2"><time dateTime={row.closedAt ?? undefined} title={row.closedAt ?? "Ledger close time has not arrived yet"}>{row.closedAt ? relativeTime(row.closedAt, query.dataUpdatedAt) : `Ledger ${row.ledger}`}</time>{row.origin === "socket" && <span className="ms-1 text-on-surface-variant">live</span>}</td>
               <td className={`px-2 font-bold ${row.outcome === "Yes" ? "text-secondary" : "text-tertiary"}`}>{row.outcome.toUpperCase()}</td>
               <td className="px-2">{row.isBuy ? "BUY" : "SELL"}</td>
               <td className="px-2"><a href={explorerAccount(row.trader) ?? undefined} target="_blank" rel="noreferrer" className="text-primary underline">{row.trader === address ? "you" : shortAddress(row.trader)}</a></td>
-              {[row.collateral, row.shares, row.fee].map((value, index) => <td key={titles[index + 4]} className="px-2 text-right" title={formatUsdc(value, { maxDecimals: 7 })}>{formatUsdc(value, { maxDecimals: index === 2 ? 7 : 2, grouping: true })}</td>)}
-              <td className="px-2 text-right">{(row.yesBpsAfter / 100).toFixed(2)}%{movement !== null && <span aria-label={`${movement >= 0 ? "up" : "down"} ${Math.abs(movement)} basis points`}> {movement > 0 ? "↑" : movement < 0 ? "↓" : "→"}</span>}</td>
+              {[row.collateral, row.shares, row.fee].map((value, index) => <td key={titles[index + 4]} className="px-2 text-end" title={formatUsdc(value, { maxDecimals: 7 })}>{formatUsdc(value, { maxDecimals: index === 2 ? 7 : 2, grouping: true })}</td>)}
+              <td className="px-2 text-end">{(row.yesBpsAfter / 100).toFixed(2)}%{movement !== null && <span aria-label={`${movement >= 0 ? "up" : "down"} ${Math.abs(movement)} basis points`}> {movement > 0 ? "↑" : movement < 0 ? "↓" : "→"}</span>}</td>
               <td className="px-2"><a href={explorerTx(row.txHash) ?? undefined} target="_blank" rel="noreferrer" className="text-primary underline" aria-label={`View transaction ${row.txHash}`}>{row.txHash.slice(0, 8)}…</a></td>
             </tr>;
           })}

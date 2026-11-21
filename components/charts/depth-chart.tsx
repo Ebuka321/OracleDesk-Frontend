@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import { depthCurve, type DepthLevel } from "@/lib/stellar/depth";
 import { formatUsdc, usdcToNumber } from "@/lib/stellar/units";
+import { useDirection } from "@/components/layout/DirectionProvider";
 
 export interface DepthMarket {
   reserve_yes: bigint;
@@ -63,6 +64,7 @@ function DepthTooltip({
 
 /** Two-sided synthetic depth curve for an FPMM market (exact bigint math). */
 export function DepthChart({ market }: { market: DepthMarket }) {
+  const dir = useDirection();
   const { reserve_yes, reserve_no, fee_bps, sets_minted } = market;
   const curve = useMemo(
     () => depthCurve({ reserve_yes, reserve_no, fee_bps, sets_minted }),
@@ -108,18 +110,20 @@ export function DepthChart({ market }: { market: DepthMarket }) {
               dataKey="price"
               type="number"
               domain={["dataMin", "dataMax"]}
+              reversed={dir === "rtl"}
               tickFormatter={(v: number) => `${v.toFixed(0)}%`}
               tick={{ fontSize: 10, fill: "#6f797c" }}
               axisLine={false}
               tickLine={false}
             />
             <YAxis
+              orientation={dir === "rtl" ? "right" : "left"}
               tickFormatter={(v: number) => `$${v >= 1000 ? `${(v / 1000).toFixed(1)}K` : v}`}
               tick={{ fontSize: 10, fill: "#6f797c" }}
               axisLine={false}
               tickLine={false}
             />
-            <Tooltip content={<DepthTooltip feeBps={fee_bps} />} />
+            <Tooltip wrapperStyle={{ direction: dir }} content={<DepthTooltip feeBps={fee_bps} />} />
             <ReferenceLine x={midPct} stroke="#004655" strokeDasharray="6 4" strokeWidth={1.5} />
             <Area
               type="stepAfter"
@@ -148,7 +152,7 @@ export function DepthChart({ market }: { market: DepthMarket }) {
         <summary className="cursor-pointer font-label-caps text-label-caps text-on-surface-variant">
           Depth table
         </summary>
-        <table className="w-full text-left font-data-mono text-[11px] mt-2">
+        <table className="w-full text-start font-data-mono text-[11px] mt-2">
           <thead>
             <tr className="border-b border-outline-variant">
               <th className="py-1 font-label-caps text-on-surface-variant">Price</th>

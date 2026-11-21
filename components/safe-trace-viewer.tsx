@@ -3,6 +3,8 @@ import { Icon } from "@/components/ui/icon";
 
 import React, { useMemo, useState } from "react";
 import { validateTraceContent, type ValidatedTraceContent } from "@/lib/stellar/trace-schema";
+import { analyzeTextSafety } from "@/lib/text-safety";
+import { SafeText } from "@/components/safe-text";
 
 export interface SafeTraceViewerProps {
   content: unknown;
@@ -25,6 +27,12 @@ export function SafeTraceViewer({
   const [copied, setCopied] = useState(false);
 
   const validation = useMemo(() => validateTraceContent(content), [content]);
+
+  // Analyze raw content text for bidi/invisible/confusables to qualify verified badge
+  const contentString = useMemo(() => {
+    return typeof content === "string" ? content : JSON.stringify(content);
+  }, [content]);
+  const contentSafety = useMemo(() => analyzeTextSafety(contentString), [contentString]);
 
   const copyJson = () => {
     if (!validation.ok) return;
@@ -65,7 +73,7 @@ export function SafeTraceViewer({
             </span>
             {data.agent && (
               <span className="bg-surface-container text-on-surface px-2.5 py-0.5 rounded text-label-caps font-label-caps font-bold">
-                AGENT: {data.agent}
+                AGENT: <SafeText text={data.agent} />
               </span>
             )}
             {data.action && (
@@ -82,10 +90,29 @@ export function SafeTraceViewer({
               </span>
             )}
             {verified ? (
-              <span className="flex items-center gap-1 text-secondary text-label-caps font-label-caps font-bold">
-                <Icon name="verified" filled className="text-[16px]" />
-                Verified Content
-              </span>
+              contentSafety.hasBidiOrInvisible ? (
+                <span
+                  role="alert"
+                  title="Verified hash, but trace contains hidden or deceptive characters"
+                  className="flex items-center gap-1 text-error text-label-caps font-label-caps font-bold bg-error/10 px-2 py-0.5 rounded border border-error/30"
+                >
+                  <Icon name="warning" className="text-[16px]" />
+                  Verified, but contains hidden or deceptive characters
+                </span>
+              ) : contentSafety.hasConfusables ? (
+                <span
+                  title="Verified hash, but trace contains mixed-script look-alike characters"
+                  className="flex items-center gap-1 text-amber-600 text-label-caps font-label-caps font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-600/30"
+                >
+                  <Icon name="verified" filled className="text-[16px]" />
+                  Verified (confusable warning)
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-secondary text-label-caps font-label-caps font-bold">
+                  <Icon name="verified" filled className="text-[16px]" />
+                  Verified Content
+                </span>
+              )
             ) : (
               <span className="flex items-center gap-1 text-on-surface-variant text-label-caps font-label-caps">
                 <Icon name="search" className="text-[16px]" />
@@ -94,29 +121,37 @@ export function SafeTraceViewer({
             )}
           </div>
           <h3 className="font-headline-sm text-headline-sm text-on-surface">
-            {title || data.decisionType || "Agent Decision Reasoning"}
+            {title ? <SafeText text={title} /> : data.decisionType || "Agent Decision Reasoning"}
           </h3>
         </div>
 
         <div className="flex items-center gap-2">
+          {ipfsCid && (
+            <span
+              className="font-data-mono text-xs text-on-surface-variant bg-surface-container px-2 py-1 rounded"
+              title={`IPFS CID: ${ipfsCid}`}
+            >
+              CID: {ipfsCid.slice(0, 8)}…{ipfsCid.slice(-6)}
+            </span>
+          )}
           <button
             type="button"
             onClick={copyJson}
-            className="px-3 py-1.5 bg-surface border border-outline-variant rounded font-label-caps text-xs text-on-surface hover:bg-surface-container transition-colors flex items-center gap-1.5"
-            title="Copy sanitized JSON"
+            className="p-1.5 text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded transition-colors text-xs flex items-center gap-1"
+            title="Copy sanitized JSON payload"
           >
-            <Icon name={copied ? "check" : "content_copy"} className="text-sm" />
-            {copied ? "COPIED" : "COPY JSON"}
+            <Icon name={copied ? "check" : "content_copy"} className="text-base" />
+            <span className="hidden sm:inline">{copied ? "Copied" : "JSON"}</span>
           </button>
         </div>
       </div>
 
-      {/* Warnings Banner if any URLs or fields were filtered */}
-      {warnings && warnings.length > 0 && (
-        <div className="p-3 bg-amber-500/10 border-b border-amber-500/20 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-2">
-          <Icon name="info" className="text-sm mt-0.5 text-amber-600" />
-          <div>
-            <span className="font-bold">Sanitization notes: </span>
+      {/* Warnings & Sanitization Notices */}
+      {warnings.length > 0 && (
+        <div className="bg-surface-container-high/60 border-b border-outline-variant p-4 text-xs text-on-surface-variant flex items-start gap-2">
+          <Icon name="warning" className="text-base text-amber-500 shrink-0 mt-0.5" />
+          <div className="leading-relaxed">
+            <span className="font-bold">Sanitization Notices: </span>
             {warnings.join("; ")}
           </div>
         </div>
@@ -180,7 +215,7 @@ export function SafeTraceViewer({
             Reasoning & Analysis
           </h4>
           <div className="space-y-3 font-body-md text-on-surface leading-relaxed whitespace-pre-wrap break-words bg-surface-container-low/50 p-4 rounded-lg border border-outline-variant/50">
-            {data.reasoning}
+            <SafeText text={data.reasoning} as="div" />
           </div>
         </div>
       )}
@@ -200,7 +235,7 @@ export function SafeTraceViewer({
               >
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <span className="font-body-md font-semibold text-on-surface truncate pr-2">
+                    <span className="font-body-md font-semibold text-on-surface truncate pe-2">
                       {source.name}
                     </span>
                     <span className="font-data-mono text-xs font-bold text-primary">
@@ -214,9 +249,9 @@ export function SafeTraceViewer({
                     ></div>
                   </div>
                   {source.signal && (
-                    <p className="text-xs text-on-surface-variant italic leading-relaxed break-words line-clamp-4">
-                      &quot;{source.signal}&quot;
-                    </p>
+                    <div className="text-xs text-on-surface-variant italic leading-relaxed break-words line-clamp-4">
+                      &quot;<SafeText text={source.signal} />&quot;
+                    </div>
                   )}
                 </div>
 
@@ -253,7 +288,9 @@ export function SafeTraceViewer({
                 className="text-xs text-on-surface bg-surface-container-low p-2.5 rounded border border-outline-variant/60 flex items-start gap-2"
               >
                 <Icon name="check_circle" className="text-secondary text-sm shrink-0 mt-0.5" />
-                <span className="break-words">{cond}</span>
+                <span className="break-words">
+                  <SafeText text={cond} />
+                </span>
               </li>
             ))}
           </ul>
@@ -266,28 +303,16 @@ export function SafeTraceViewer({
           <button
             type="button"
             onClick={() => setShowRaw(!showRaw)}
-            className="w-full flex items-center justify-between text-left font-label-caps text-xs text-on-surface-variant hover:text-on-surface transition-colors"
+            className="w-full flex items-center justify-between text-start font-label-caps text-xs text-on-surface-variant hover:text-on-surface transition-colors"
           >
-            <span className="flex items-center gap-2">
-              <Icon name="code" className="text-sm" />
-              Additional Fields (Inert Data)
-            </span>
+            <span>ADDITIONAL RAW FIELDS ({Object.keys(data.rawUnknownFields).length})</span>
             <Icon name={showRaw ? "expand_less" : "expand_more"} className="text-sm" />
           </button>
-
           {showRaw && (
-            <div className="mt-4 p-4 bg-on-background text-[#6ffbbe] rounded-lg font-data-mono text-xs overflow-x-auto max-h-80 custom-scrollbar">
+            <div className="mt-3 p-4 bg-surface-container-low rounded-lg font-data-mono text-xs overflow-x-auto text-on-surface">
               <pre>{JSON.stringify(data.rawUnknownFields, null, 2)}</pre>
             </div>
           )}
-        </div>
-      )}
-
-      {/* Metadata footer */}
-      {(ipfsCid || traceHash) && (
-        <div className="p-4 bg-surface-container-low border-t border-outline-variant text-[11px] text-on-surface-variant flex flex-wrap gap-4 items-center justify-between font-data-mono">
-          {traceHash && <span>HASH: {traceHash.slice(0, 16)}…{traceHash.slice(-8)}</span>}
-          {ipfsCid && <span>IPFS: {ipfsCid}</span>}
         </div>
       )}
     </div>

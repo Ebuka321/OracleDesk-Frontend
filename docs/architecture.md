@@ -24,6 +24,14 @@ final URL stays under `API_URL`. Socket payloads are validated by
 `explorerAccount` and `ipfsUrl` return `null` for invalid input, and external
 URLs from backend data pass `safeExternalUrl` before being rendered as links.
 
+### Address entry
+
+All user-entered Stellar addresses in `app/` must go through `<AddressInput>` (`components/ui/address-input.tsx`), backed by `lib/stellar/address-policy.ts` and `lib/stellar/address-book.ts`. An ESLint `no-restricted-syntax` rule flags raw `StrKey.isValidEd25519PublicKey` calls in `app/**`.
+
+- **`watch`** (e.g. `/portfolio` watch form): warns on prefix/suffix look-alikes against known counterparties and requires a one-click confirmation. External `?watch=` links do not switch silently; they stage `pendingWatch` in `ViewedAddressProvider` for explicit confirmation.
+- **`authority`** (e.g. `/admin/agents`, future admin handovers): enforces expected address kind, blocks look-alikes until the user re-types the last 8 characters, and requires explicit confirmation on first-time addresses with `<AddressText>` showing full 4-character chunks and a deterministic 5×5 identicon.
+- **`recipient`** (transfers and treasury operations): same confirmation gates as `authority`, and offers to save confirmed recipients to the per-wallet, per-network local address book.
+
 ## Where data comes from
 
 The frontend has two sources that can disagree, and it says which one a value came from (the small `chain` / `backend` tags in the UI).
@@ -41,6 +49,28 @@ The frontend has two sources that can disagree, and it says which one a value ca
 A backend market links to the chain through `onChainMarketId` (market-core's `u64` id, a decimal string in JSON). On-chain markets the backend doesn't know are still listed on `/markets`, with on-chain data only.
 
 ## Wallet and login
+
+### Provider tree
+
+`app/layout.tsx` nests providers and global banners in this order:
+
+1. `BuildIdentityBanner` (outside providers; reads static `BUILD_IDENTITY`)
+2. `PwaRegistrar` (service-worker registration and update-pending context)
+3. `WalletProvider` (wallet adapter, network state, signer, query client)
+4. `ViewedAddressProvider` (must sit inside `WalletProvider` for `useWalletAddress()` and `useQueryClient()`)
+5. `CopyTradeReconciler`, `ErrorReportingInit`, `ConsentBanner`
+6. `RealtimeProvider` → `HealthProvider` → `InboxProvider`
+7. `Navbar`, followed by a sticky wrapper containing `IntegrityBanner` and `ViewingBanner` (so they stack rather than overlapping), then `NetworkConsistencyBanner`, `RpcDegradedBanner`, `#main-content`, `Footer`, `DebugMount`, `WebVitals`.
+
+### CI jobs
+
+| Job | Purpose |
+|---|---|
+| `install` | Installs root `node_modules` once and caches by `package-lock.json` hash |
+| `frontend` | Runs `check:ci-claims`, bindings/env/SDK/API/docs checks, `typecheck`, `lint`, `test`, `test:scripts`, `build`, origin/secret scans |
+| `x402-contract` | Caches x402 service deps, runs `check:x402`, `tsc -p e2e/x402`, and `e2e:x402` inside `unshare --net` (no egress) |
+| `secrets-canary` | Verifies `scan-build-secrets.mjs` catches a synthetic canary secret |
+| `perf` | Builds production bundle and runs Lighthouse CI |
 
 ### User-scoped data
 
@@ -75,6 +105,18 @@ machine (`SESSION_SYNCED`). Disconnect and wallet switches call
 `POST /auth/logout` before a new sign-in starts (`lib/api/auth.ts` serializes
 logout → sign-in, so a late logout cannot clear the new cookie).
 `POST /auth/verify` is sent with `X-Session-Mode: cookie`.
+
+### Login proof of work
+
+During challenge issuance bursts (above `AUTH_POW_THRESHOLD_PER_MIN`), the backend gates `POST /auth/challenge` behind a hashcash-style proof of work, responding with `429 POW_REQUIRED` and challenge details `{ bits, salt, retryAfterSecs }` (plus `X-Auth-PoW: bits=<n>; salt=<hex>` and `Retry-After`).
+
+- **Preimage format:** UTF-8 encoded string `oracledesk-auth:${account}:${nonce}:${salt}`.
+- **Base account rule:** For Stellar muxed addresses (`M...`), the base Ed25519 `G...` account is extracted before hashing so the preimage matches the backend's `identity.account` verification.
+- **Solver & Workers:** Solving executes in a dedicated module Web Worker (`lib/auth/pow.worker.ts`). When `navigator.hardwareConcurrency >= 4`, two workers search disjoint nonce ranges in parallel. The solver uses incremental `Sha256` midstate cloning to avoid recomputing the fixed 64-byte prefix block.
+- **Main-thread fallback:** If Web Workers or CSP worker execution are unavailable, solving falls back to `lib/auth/pow-runner.ts` which yields via `scheduler.yield()` or microtask timeouts every 2,000 hashes (< 50ms per slice).
+- **Difficulty ceiling:** Controlled by `NEXT_PUBLIC_AUTH_POW_MAX_BITS` (default `24`). If requested bits exceed this ceiling, sign-in refuses with a clean user-facing error rather than exhausting device resources.
+- **Retries & Expiry:** At most two solve retries per attempt (including handling `POW_INVALID` via `GET /auth/challenge/pow`). `Retry-After` headers are strictly respected before re-requesting.
+- **CSP compliance:** Loaded with `new Worker(new URL(...), { type: "module" })` conforming to CSP `worker-src 'self'`.
 
 One-shot migration: on first load in cookie mode, a legacy
 `oracledesk_token` is exchanged with `POST /auth/upgrade` and then deleted
@@ -180,7 +222,7 @@ which the backend handles idempotently. A saved hash can never be replaced.
 - `lib/stellar/clients.ts` builds a generated binding `Client` per contract, optionally with the wallet as signer. The USDC Stellar Asset Contract has no Wasm and so no bindings; `token.balance` and `token.transfer` are built with `AssembledTransaction.build`.
 - Read-only clients are memoised by contract, RPC URL, passphrase and timeout. Each generated constructor decodes every base64 spec entry, so the first factory call caches the parsed `Spec`; signer-bound clients are then built with the base `contract.Client` from that spec, keyed by the signer object and `publicKey` in a `WeakMap`. All clients share one `rpc.Server` per URL (`rpcServer`), so quote and simulation calls reuse one HTTP client. `__resetClientCaches()` and `__specBuildCount()` exist only for the cache tests and benchmark.
 - Reads are simulations (no fee, no signature), except the batched market list described below. Write-adjacent reads deliberately stay on simulation so they cannot observe a ledger entry older than the write they are preparing.
-- `npm run bench:clients` measures generated-client construction and quote building against the cached path without network calls.
+- `node scripts/bench-clients.mjs` measures generated-client construction and quote building against the cached path without network calls.
 - Writes (`useBuy`, `useSell`, `useRedeem`, `useUsdcTransfer`) check that a wallet is connected and on the right network, run fresh contract preflight checks, simulate, then `signAndSend`. A per-address queue serializes complete build/sign/send jobs in this tab and coordinates browser tabs with Web Locks (or a local-storage lease fallback); stale-sequence errors receive one fresh-build retry. The buy, sell, redeem, and USDC-transfer paths can decode the final simulated contract invocation and show its arguments and transaction envelope for review before the wallet prompt.
 - `useBuy` quotes again immediately before building the transaction and sets `min_shares_out = minOut(quote, slippageBps)`, so slippage is enforced on-chain.
 
@@ -227,6 +269,19 @@ Position and USDC balance caches hold `{ value, ledger, provisional?, awaitingRp
 Reads are cancelled before signing and again before the confirmed delta is applied. No delta is applied while awaiting a signature, so rejection and simulation failure leave values unchanged. Consecutive confirmations compose against the latest cache. Negative deltas that exceed cached holdings or balance trigger invalidation. No quote cache is invalidated by this flow.
 
 Reconciliation refetches after 1, 3 and 8 seconds. Reads below the cached ledger cannot overwrite it. At or above that ledger, matching reads remove the provisional marker; different reads replace the value and log `[optimistic] mismatch`. After three lagging reads, the value remains labelled **awaiting RPC**, with its transaction link, until an authoritative read arrives. Query removal on disconnect disposes reconciliation timers. Fee previews are rebuilt with the current wallet before transaction review and signing.
+
+### Reconciliation console
+
+`/admin/reconciliation` is the read-only front end for the backend's periodic market reconciler (`OracleDesk-Backend/src/services/market-reconciler.service.ts`). It is gated on the `reconciliation.run` RBAC permission and never repairs anything itself. The backend owns all writes and the `market-reconciler` advisory lock; the browser only lists runs, starts one with `POST /admin/reconciliation/run`, and reads `GET /admin/reconciliation/runs/:id`.
+
+Runs and findings are polled every 5 s while unfinished, backing off to 30 s and stopping 30 minutes after the oldest unfinished run started. A run that could not take the advisory lock is recorded with a `finishedAt` and the error `another instance is reconciling; run skipped`; the UI labels it **Skipped (lock held)** rather than a failure. Findings are paged 200 at a time and rendered through a windowed virtual table; "Load all" stops at 5,000 findings so a large run cannot lock the tab.
+
+`lib/admin/drift.ts` mirrors the backend's `classifyDrift` vocabulary: `MISSED_RESOLUTION`, `MISSED_VOID`, `CLOSED_BUT_ACTIVE`, `PRICE_STALE`, `CLOSE_TIME_MISMATCH`, `HASH_MISMATCH`, `NOT_FOUND_ON_CHAIN` and `STATUS_REGRESSION`, with actions `REPAIRED`, `REPORTED`, `DEFERRED` and `SKIPPED_NEWER`. It uses the same 60 s close grace window and treats a row `RESOLVING` as non-final. The backend compares prices as floating-point probabilities with a 0.005 tolerance; this classifier compares integer basis points with `|priceYesBps(chain) − round(prob × 10_000)| > 50`. The two agree for the shipped reserve ranges, but the boundary is deliberately tested in `lib/admin/__tests__/drift.test.ts`. Integrity classes (`HASH_MISMATCH`, `STATUS_REGRESSION`, `NOT_FOUND_ON_CHAIN`) are never repaired by the backend; a close-time mismatch next to a hash mismatch is reported rather than repaired as a likely mislinked row. Resolution-class findings are deferred while the indexer is behind the observation ledger.
+
+`lib/admin/recheck.ts` performs an independent browser-side verification: it groups findings by `onChainMarketId`, reads chain state through the shared `MarketBatcher` (at most 200 ids per call), reads backend rows with a three-way concurrency limiter, and classifies each row again against ledger time from `ledgerClock`. `MarketNotFound` confirms `NOT_FOUND_ON_CHAIN`; an archived entry is `unverifiable` with `archived; restore needed`. Results are cached under `["stellar", "recheck", onChainMarketId, ledgerBucket]` and can be refreshed per finding or for the whole page. A resolved re-check is neutral/good; price re-checks are hidden behind an explicit toggle. API guards keep unknown drift classes and actions visible as `unknown class` / `unknown action` and warn in development instead of dropping rows from a newer backend.
+
+`/admin` diagnostics now uses the same class names for status, price and missing-chain samples; a missing backend row remains frontend-only because there is no backend finding to classify. CSV and JSON exports preserve exact strings (ids and bigints are stringified, never parsed as floats) and redact actor-like fields only; market ids and hashes stay public. The console does not subscribe to the admins socket and does not change backend pagination.
+
 ## Write path and transaction lifecycle
 
 Every state-changing write (`useBuy`, `useSell`, `useRedeem`, `useUsdcTransfer`) follows an explicit, observable lifecycle governed by `TxLifecycle` in `lib/stellar/tx-lifecycle.ts`:
@@ -320,6 +375,15 @@ The home hero shows the most liquid ACTIVE market from the markets feed (`pickFe
 
 `RPC_URLS` = `NEXT_PUBLIC_STELLAR_RPC_URL` (primary) + `NEXT_PUBLIC_STELLAR_RPC_URLS`. `lib/stellar/rpc-pool.ts` verifies each endpoint with `getNetwork` (wrong passphrase → never used), probes `getLatestLedger` every 15 s while the tab is visible, and keeps the last 50 samples per endpoint (p50/p95, error rate, 429s with Retry-After back-off, ledger lag). Selection is sticky: it switches only when another endpoint scores ≥30% better on two consecutive probes, or the current one is down/degraded. Write hooks run inside `withPinnedRpc`, so quote, simulate, submit and polling use one endpoint; a failed submission is never resent elsewhere. Reads carry the ledger they were simulated at (quick-view shows "as of ledger N") and an older-ledger result never replaces newer cached data. Single-endpoint setups behave as before.
 
+### RPC scheduler (`lib/stellar/rpc-scheduler.ts`)
+
+Every `rpcServer()` method except `getNetwork` passes through `RpcScheduler` in the browser (pass-through on the server and in node tests):
+
+- **Buckets**: per-`(endpoint, methodClass)` token buckets (`simulate`, `send`, `poll`, `entries`, `events`, `meta`) using AIMD (`onRateLimited` halves rate down to 0.2/s and honours `Retry-After`; `onSuccess` adds 0.1/s up to the class ceiling).
+- **Priority classes**: `submit` (writes under `withPinnedRpc`), `interactive` (quotes and ticket reads), `normal` (default React Query refetches), `background` (events, price history, equity, position scans, probes).
+- **25% reserve rule**: `background` calls can only take a token when `tokens > ceil(burst * 0.25)`, reserving headroom for `submit` and `interactive` work. `submit` `getTransaction` polls retain a 1-per-2 s floor even while paused.
+- **Fairness & tagging**: Within a priority, per-`tag` FIFO sub-queues are served round-robin. Callers tag background/interactive work synchronously with `withRpcPriority({ priority, tag }, () => ...)`. Queued calls are cancellable via `AbortSignal` and rejected if `rpcNetworkEpoch()` changes while queued.
+
 ## Trace verification
 
 The on-chain `trace_hash` decides whether content is shown. Everything else is evidence about why a check failed.
@@ -333,7 +397,7 @@ The on-chain `trace_hash` decides whether content is shown. Everything else is e
 
 ## x402 per-trace unlocks
 
-`lib/x402/client.ts` talks to the contracts repo's trace service (`GET {NEXT_PUBLIC_X402_URL}/traces/:onChainTraceId`) with the same `@x402/*` release the service pins (2.26.0, exact; `npm run check:x402`). Protocol v2 over HTTP: the 402 carries `PAYMENT-REQUIRED` (base64 JSON `PaymentRequired`), the paid retry sends `PAYMENT-SIGNATURE` (base64 JSON `PaymentPayload`), and a settled 200 carries `PAYMENT-RESPONSE` (base64 JSON `SettleResponse`). The Stellar `exact` payment is a Soroban authorization entry for one SEP-41 `transfer(payer, payTo, amount)`, signed by the wallet with `signAuthEntry` (SEP-43); the facilitator builds, sponsors and submits the transaction. Every request sends `Accept: application/json`, because the middleware answers browsers that accept `text/html` with an HTML paywall.
+`lib/x402/client.ts` talks to the contracts repo's trace service (`GET {NEXT_PUBLIC_X402_URL}/traces/:onChainTraceId`) with the same `@x402/*` release the service pins (2.26.0, exact; `node scripts/check-x402-versions.mjs`). Protocol v2 over HTTP: the 402 carries `PAYMENT-REQUIRED` (base64 JSON `PaymentRequired`), the paid retry sends `PAYMENT-SIGNATURE` (base64 JSON `PaymentPayload`), and a settled 200 carries `PAYMENT-RESPONSE` (base64 JSON `SettleResponse`). The Stellar `exact` payment is a Soroban authorization entry for one SEP-41 `transfer(payer, payTo, amount)`, signed by the wallet with `signAuthEntry` (SEP-43); the facilitator builds, sponsors and submits the transaction. Every request sends `Accept: application/json`, because the middleware answers browsers that accept `text/html` with an HTML paywall.
 
 Facts of the pinned client worth knowing:
 
@@ -387,14 +451,28 @@ Instead of independent intervals across components, `LedgerClock` (`lib/stellar/
 - **Event-Driven Invalidation**: Mounted in `WalletProvider` via `LedgerInvalidator` (`lib/stellar/ledger-invalidation.ts`). On new ledgers, `getEvents` queries `marketCore` and `usdc` to invalidate queries matching affected market IDs and user balances. Gaps > 120 ledgers perform a broad invalidation.
 - **Query Cache Policies**: On-chain queries have `staleTime: Infinity` with a 5-minute fallback poll; backend queries set `refetchIntervalInBackground: false`.
 
-## Contract integrity check (`lib/stellar/contract-check.ts`)
+## Contract integrity check (`lib/stellar/contract-check.ts`, `lib/stellar/integrity-monitor.ts`)
 
-At startup, the frontend verifies that the deployed contracts match the bundled TypeScript bindings:
+The frontend verifies that the deployed contracts match the bundled TypeScript bindings both at startup and dynamically on ledger ticks:
 
 1. **Instance Check**: Queries persistent contract instance keys for all configured contracts (`marketCore`, `treasury`, `resolver`, `reasoningRegistry`, and `usdc`) in a single batched `getLedgerEntries` call.
 2. **Wasm Spec Fingerprint**: For Wasm contracts, extracts the executable's `wasmHash`, fetches the contract code entry if not cached, parses the embedded `contractspecv0` section, normalizes spec entries (stripping doc fields and sorting by kind and name), and computes a SHA-256 fingerprint. The fingerprint is cached in `sessionStorage` per content-addressed `wasmHash`.
 3. **Stellar Asset Contract (SAC) Verification**: For USDC, verifies that the instance executable is `contractExecutableStellarAsset`, checks that the contract ID matches `new Asset(code, issuer).contractId(NETWORK_PASSPHRASE)` for `NEXT_PUBLIC_USDC_ASSET`, and simulates `name()`.
-4. **Write-Path Gating**: `useContractIntegrity()` evaluates network status. If any contract status is `mismatch`, `not-found`, or `wrong-kind`, `useWriteGuard()` blocks transaction signing with a `UserFacingError({ kind: "contract" })`, and `IntegrityBanner.tsx` renders a non-dismissable alert detailing the discrepancies. Temporary RPC connectivity failures yield `unchecked` and do not block writes.
+4. **Live Integrity Monitor (`lib/stellar/integrity-monitor.ts`)**: Runs on ledger clock ticks. Monitors contract executables and detects upgrades in real time. On executable change or upgrade events, it immediately invalidates the signing epoch via `invalidateSigningEpoch()`, sets status to `rechecking`, purges caches, and verifies the new spec against the bundled definitions.
+5. **Pre-Sign Freshness & Write-Path Gating (`lib/stellar/write-guard.ts`, `lib/stellar/tx-lifecycle.ts`)**:
+   - `assertCanWrite()` blocks writes when `monitorStatus` is `initial`, `rechecking`, or `failed`, or when the targeted contract status is not `ok`.
+   - Right before requesting wallet signature (`awaiting-signature`), `ensureFresh()` guarantees that ledger-check age is < 15 seconds, forcing an immediate probe if stale.
+   - `IntegrityBanner.tsx` displays live state: `rechecking` (yellow), `failed` (red, with reload/details), or brief `ok` notice on upgrade without blocking normal operations.
+
+### Contract capabilities (`lib/stellar/capabilities.ts`, `lib/stellar/capability-registry.ts`)
+
+Instead of treating any spec difference as a total mismatch, `resolveCapabilities` compares the on-chain `contractspecv0` structurally (function inputs/outputs and all reachable UDTs: structs, unions, ordered enums, and superset-compatible error enums; doc strings and entry order are ignored):
+
+- `match`: fingerprint equals the bundled spec.
+- `compatible`: core capabilities pass while some optional capabilities (`marketCore.buyV2`, `marketCore.splitMerge`, `registry.chainedTraces`, `treasury.vault`, etc.) are missing or incompatible. `IntegrityBanner` shows a quiet expandable info strip and core trading stays enabled.
+- `mismatch`: any `core` capability fails.
+
+`useContractCapabilities()` and `getCapabilitySnapshot()` share the React Query cache and `sessionStorage` (`oracledesk_wasm_caps_v1_<wasmHash>_<BUILD_ID>`). `<RequiresCapability cap="..." fallback={...}>` gates optional UI, and `assertCanWrite` enforces `requires?: Capability[]`. Operators can inspect any deployed contract with `node scripts/capabilities-report.mjs --contract <C...> --rpc <url>`.
 
 ## Viewed address vs signer (Watch-only mode)
 
@@ -419,3 +497,26 @@ To allow inspecting any Stellar address's positions, balances, and history witho
    - Copy-trade position sizing is strictly bound to the signer's actual USDC balance, never the watched address's funds.
 
 
+
+## Browser Storage Durability (#228)
+
+Every origin-scoped store is classified and registered with `lib/storage/quota.ts`.
+
+### Store classes and keys
+
+| Store | Class | Technology | Key / DB name |
+|---|---|---|---|
+| x402 payment journal | `evidence` | IndexedDB | `oracledesk-x402` / store `payments` |
+| Pending daily-pass payments | `evidence` | localStorage | `oracledesk_pending_payments_v1` |
+| Copy-trade outbox | `evidence` | localStorage | `oracledesk_copy_outbox:<wallet>` |
+| Persistence record | `preference` | localStorage | `oracledesk_storage_persist_v1` |
+| Inbox notifications | `preference` | IndexedDB | `oracledesk-inbox` |
+| Price-history series cache | `disposable` | IndexedDB | `oracledesk-history` / store `series` |
+| Service worker precache | `disposable` | Cache API | `shell-<BUILD_ID>` |
+
+### Rules
+
+- `evidence` stores are **never** evicted automatically.
+- `disposable` stores are evicted LRU under a `navigator.locks` Web Lock named `oracledesk-storage-evict`.
+- `navigator.storage.persist()` is requested after the first successful paid action, rate-limited to once per 7 days.
+- `assertDurableStorage(kind)` runs before x402 signing, daily-pass transfers, and copy-trade signing; it refuses with a user-facing error when evidence cannot be written durably.

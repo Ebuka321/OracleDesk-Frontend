@@ -1,0 +1,16 @@
+[
+  {
+    "id": "0003-0001",
+    "ledger": 1002,
+    "ledgerClosedAt": "2026-10-18T11:55:00Z",
+    "txHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "name": "TracePublished",
+    "data": {
+      "trace_id": "12",
+      "market_id": "7",
+      "agent": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "action": "BUY_YES",
+      "ipfs_cid": "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+    }
+  }
+]

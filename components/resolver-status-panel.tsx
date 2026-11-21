@@ -8,11 +8,12 @@ import {
   verifyResolutionCommitment,
   type ResolutionVerificationResult,
 } from "@/lib/stellar/resolution-spec";
+import { ResolutionDeadlineCard } from "@/components/market/resolution-deadline-card";
 
 const SourceTag = ({ source }: { source: "chain" | "backend" }) => (
   <span
     title={source === "chain" ? "Read live from the market contract" : "OracleDesk backend estimate; may lag the chain"}
-    className={`ml-1 text-[9px] font-bold uppercase px-1 rounded ${
+    className={`ms-1 text-[9px] font-bold uppercase px-1 rounded ${
       source === "chain"
         ? "bg-secondary-container text-on-secondary-container"
         : "bg-surface-container-highest text-on-surface-variant"
@@ -23,60 +24,79 @@ const SourceTag = ({ source }: { source: "chain" | "backend" }) => (
 );
 
 export interface ResolverStatusPanelProps {
-  resolverState?: "Unconfigured" | "SignersPending" | "Finalized" | string;
+  onChainMarketId?: bigint | string | null;
+  resolverState?:
+    | "Unconfigured"
+    | "SignersPending"
+    | "Finalized"
+    | "Expired"
+    | "Disputed"
+    | "HybridPricePending"
+    | "HybridFallbackOpen"
+    | string;
   marketStatus?: string;
   resolutionHash?: Buffer | Uint8Array | string | null;
   resolutionSpec?: ResolutionSpec | null;
+  /**
+   * The resolution_hash committed on-chain in the market-core/resolver contract.
+   */
+  resolutionHash?: Buffer | Uint8Array | string | null;
+  /**
+   * Optional market status from market-core (e.g. "Active", "Resolving", "Resolved").
+   */
+  marketStatus?: string;
   className?: string;
 }
 
 export function ResolverStatusPanel({
+  onChainMarketId,
   resolverState = "Unconfigured",
   marketStatus,
   resolutionHash,
   resolutionSpec,
+  resolutionHash,
+  marketStatus,
   className = "",
 }: ResolverStatusPanelProps) {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
   const [verification, setVerification] = useState<ResolutionVerificationResult | null>(null);
 
   useEffect(() => {
-    let active = true;
     void verifyResolutionCommitment(resolutionSpec, resolutionHash).then((res) => {
-      if (active) setVerification(res);
+      setVerification(res);
     });
-    return () => {
-      active = false;
-    };
   }, [resolutionSpec, resolutionHash]);
 
+  const hashString = formatHashHex(resolutionHash);
   const formattedWords = formatResolutionSpec(resolutionSpec);
-  const hashString = verification?.onChainHash ?? "";
 
   return (
-    <div className={`rounded-xl border border-outline-variant bg-surface overflow-hidden ${className}`}>
-      {/* Collapsible Header */}
+    <div
+      className={`border border-outline-variant rounded-xl overflow-hidden bg-surface-container-lowest transition-all ${className}`}
+    >
+      {/* Header bar / Summary Toggle */}
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full p-4 flex items-center justify-between bg-surface-container-low hover:bg-surface-container transition-colors text-left"
+        className="w-full p-4 flex items-center justify-between bg-surface-container-low hover:bg-surface-container transition-colors text-start"
       >
         <div className="flex items-center gap-2">
           <Icon name="policy" className="text-primary text-base" />
           <h3 className="font-headline-sm text-headline-sm text-on-surface">Market Resolution & Commitment</h3>
           {verification?.status === "verified" && (
-            <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-bold text-secondary bg-secondary/10 px-2 py-0.5 rounded border border-secondary/20">
+            <span className="ms-2 inline-flex items-center gap-1 text-[10px] font-bold text-secondary bg-secondary/10 px-2 py-0.5 rounded border border-secondary/20">
               <Icon name="verified" filled className="text-[13px]" />
               Commitment Verified
             </span>
           )}
           {verification?.status === "mismatch" && (
-            <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-bold text-error bg-error/15 px-2 py-0.5 rounded border border-error animate-pulse">
+            <span className="ms-2 inline-flex items-center gap-1 text-[10px] font-bold text-error bg-error/15 px-2 py-0.5 rounded border border-error animate-pulse">
               <Icon name="error" className="text-[13px]" />
               Spec Hash Mismatch
             </span>
           )}
         </div>
+
         <Icon name={isOpen ? "expand_less" : "expand_more"} className="text-on-surface-variant text-sm" />
       </button>
 
@@ -106,6 +126,8 @@ export function ResolverStatusPanel({
             )}
           </div>
 
+          <ResolutionDeadlineCard onChainMarketId={onChainMarketId} />
+
           {/* Revealed Spec in Plain Words */}
           <div className="p-4 bg-surface-container-lowest rounded-lg border border-outline-variant">
             <div className="flex items-center justify-between mb-2">
@@ -121,6 +143,11 @@ export function ResolverStatusPanel({
                 <span className="text-[11px] font-bold text-error flex items-center gap-1">
                   <Icon name="error" className="text-xs" />
                   Hash mismatch (do not trust!)
+                </span>
+              ) : verification?.status === "unsupported" ? (
+                <span className="text-[11px] font-medium text-on-surface-variant flex items-center gap-1">
+                  <Icon name="help_outline" className="text-xs" />
+                  Rule kind not evaluated
                 </span>
               ) : null}
             </div>
@@ -160,7 +187,13 @@ export function ResolverStatusPanel({
                       : "text-on-surface-variant"
                 }`}
               >
-                {verification?.computedHash ?? (resolutionSpec ? "Computing…" : "No revealed spec to hash")}
+                {verification?.computedHash ?? (
+                  verification?.status === "unsupported"
+                    ? "N/A (unsupported kind)"
+                    : resolutionSpec
+                      ? "Computing…"
+                      : "No revealed spec to hash"
+                )}
               </code>
             </div>
           </div>
@@ -179,8 +212,36 @@ export function ResolverStatusPanel({
               </div>
             </div>
           )}
+
+          {/* Non-alarming Info on Unsupported */}
+          {verification?.status === "unsupported" && (
+            <div
+              role="note"
+              className="p-3 bg-surface-container border border-outline-variant rounded-lg text-on-surface-variant text-xs flex items-center gap-2"
+            >
+              <Icon name="info" className="text-base text-on-surface-variant" />
+              <div>
+                <span className="font-semibold text-on-surface">Notice: </span>
+                This market uses an advanced resolver rule ({resolutionSpec?.kind}). The client cannot independently verify this commitment format, so no claim is made either way.
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+function SourceTag({ source }: { source: "chain" | "backend" }) {
+  return (
+    <span
+      className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider ml-1 ${
+        source === "chain"
+          ? "bg-secondary/15 text-secondary"
+          : "bg-surface-container-high text-on-surface-variant"
+      }`}
+    >
+      {source}
+    </span>
   );
 }

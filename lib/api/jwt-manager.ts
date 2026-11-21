@@ -1,6 +1,6 @@
 /**
- * JWT lifecycle management: expiry checking, invalid token handling,
- * single-flight re-authentication to prevent thundering herd.
+ * Client-side JWT timing for proactive refresh (issue #269).
+ * Tokens are decoded without verification; only `iat`/`exp` are used.
  */
 
 interface JWTPayload {
@@ -26,70 +26,20 @@ export function decodeJWT(token: string): JWTPayload | null {
   }
 }
 
-/**
- * Check if a token is expired (exp claim in the past).
- * Returns true if expired or invalid.
- */
-export function isTokenExpired(token: string): boolean {
+export interface TokenTiming { iat: number; exp: number; skewMs: number }
+
+/** Server-vs-device clock skew taken from `iat` at the moment the token arrived. */
+export function timingOf(token: string, receivedAtMs: number): TokenTiming | null {
   const payload = decodeJWT(token);
-  if (!payload || typeof payload.exp !== "number") {
-    return true;
-  }
-
-  const expiresAt = payload.exp * 1000; // JWT exp is in seconds
-  const now = Date.now();
-  // Consider token expired if within 30s of expiry (skew + time for request)
-  const bufferMs = 30 * 1000;
-
-  return now > expiresAt - bufferMs;
+  if (!payload || typeof payload.iat !== "number" || typeof payload.exp !== "number") return null;
+  return { iat: payload.iat, exp: payload.exp, skewMs: payload.iat * 1000 - receivedAtMs };
 }
 
 /**
- * Get time remaining until token expires (in milliseconds).
- * Returns 0 if already expired.
+ * Device-clock ms at which to refresh: 80% of the lifetime, but no later than
+ * `exp - 10 min` and no sooner than 60 s after `iat`.
  */
-export function getTokenTTL(token: string): number {
-  const payload = decodeJWT(token);
-  if (!payload || typeof payload.exp !== "number") {
-    return 0;
-  }
-
-  const expiresAt = payload.exp * 1000;
-  const now = Date.now();
-  return Math.max(0, expiresAt - now);
-}
-
-/**
- * Single-flight re-auth: track in-flight auth requests to prevent
- * multiple concurrent re-auth attempts.
- */
-let reAuthPromise: Promise<void> | null = null;
-
-export function setReAuthPromise(promise: Promise<void> | null) {
-  reAuthPromise = promise;
-}
-
-export function getReAuthPromise() {
-  return reAuthPromise;
-}
-
-/**
- * Check if re-auth is currently in flight.
- */
-export function isReAuthInFlight(): boolean {
-  return reAuthPromise !== null;
-}
-
-/**
- * Wait for in-flight re-auth to complete (if any).
- * No-op if no re-auth in progress.
- */
-export async function waitForReAuth(): Promise<void> {
-  if (reAuthPromise) {
-    try {
-      await reAuthPromise;
-    } catch {
-      // Re-auth failed; let the caller handle it
-    }
-  }
+export function refreshDueAt(t: TokenTiming): number {
+  const serverSeconds = Math.max(t.iat + 60, Math.min(t.iat + 0.8 * (t.exp - t.iat), t.exp - 600));
+  return serverSeconds * 1000 - t.skewMs;
 }

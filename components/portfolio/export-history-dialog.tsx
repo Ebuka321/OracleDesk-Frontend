@@ -117,7 +117,7 @@ export function ExportHistoryDialog({
                     {item.label}
                   </span>
                   {counts && (
-                    <span className="ml-2 font-data-mono text-xs text-outline">
+                    <span className="ms-2 font-data-mono text-xs text-outline">
                       ({counts[item.id]} rows)
                     </span>
                   )}

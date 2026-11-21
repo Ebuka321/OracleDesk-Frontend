@@ -39,6 +39,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { LiveRegion } from "@/components/ui/live-region";
+import { useDirection } from "@/components/layout/DirectionProvider";
+import { Ltr } from "@/components/ui/ltr";
 import Link from "next/link";
 const QUOTE_DEBOUNCE_MS = 400;
 /** Below this remaining edge (1 point) the user must tick a box before copying. */
@@ -132,6 +134,7 @@ function CopyTradeContent() {
   const onChainMarket = useOnChainMarket(onChainMarketId);
 
   const { viewed, isWatching } = useViewedAddress();
+  const dir = useDirection();
   const balance = useUsdcBalance(address);
   const balanceState = useUsdcBalanceState(address);
   const ledger = useLedgerNow();
@@ -239,7 +242,7 @@ function CopyTradeContent() {
   const handleSliderInteraction = (clientX: number) => {
     if (!sliderRef.current) return;
     const rect = sliderRef.current.getBoundingClientRect();
-    const x = clientX - rect.left;
+    const x = dir === "rtl" ? rect.right - clientX : clientX - rect.left;
     const percentage = Math.max(0, Math.min(100, (x / rect.width) * 100));
     setAllocationBps(Math.round(percentage * 100));
   };
@@ -261,8 +264,10 @@ function CopyTradeContent() {
 
   const onSliderKey = (e: React.KeyboardEvent) => {
     const step = e.shiftKey ? 1000 : 100;
-    if (e.key === "ArrowRight" || e.key === "ArrowUp") setAllocationBps((v) => Math.min(10_000, v + step));
-    if (e.key === "ArrowLeft" || e.key === "ArrowDown") setAllocationBps((v) => Math.max(0, v - step));
+    const incKey = dir === "rtl" ? "ArrowLeft" : "ArrowRight";
+    const decKey = dir === "rtl" ? "ArrowRight" : "ArrowLeft";
+    if (e.key === incKey || e.key === "ArrowUp") setAllocationBps((v) => Math.min(10_000, v + step));
+    if (e.key === decKey || e.key === "ArrowDown") setAllocationBps((v) => Math.max(0, v - step));
   };
 
   const handleConfirm = async () => {
@@ -467,7 +472,7 @@ function CopyTradeContent() {
               <div className="flex justify-between items-end flex-wrap gap-2">
                 <label className="font-label-caps text-label-caps text-on-surface-variant uppercase text-[10px]">Amount to copy</label>
                 <span className="font-data-mono text-data-mono text-primary font-bold text-xs sm:text-sm">
-                  {amountRaw !== null ? `${formatUsdc(amountRaw, { maxDecimals: 2, minDecimals: 2, grouping: true })} USDC` : isConnected ? "loading balance…" : "connect a wallet"}
+                  {amountRaw !== null ? <Ltr>{`${formatUsdc(amountRaw, { maxDecimals: 2, minDecimals: 2, grouping: true })} USDC`}</Ltr> : isConnected ? "loading balance…" : "connect a wallet"}
                   {choice && choice.limitedBy !== "none" && (
                     <span className="block text-[10px] font-normal text-on-surface-variant">limited by your {choice.limitedBy}</span>
                   )}
@@ -557,8 +562,8 @@ function CopyTradeContent() {
                 onTouchStart={(e) => handleSliderInteraction(e.touches[0].clientX)}
                 onTouchMove={onTouchMove}
               >
-                <div className="absolute inset-y-0 left-0 bg-primary-container rounded-full" style={{ width: `${allocation}%` }}></div>
-                <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-primary border-2 border-white rounded-full shadow-md" style={{ left: `calc(${allocation}% - 8px)` }}></div>
+                <div className="absolute inset-y-0 bg-primary-container rounded-full" style={{ insetInlineStart: 0, width: `${allocation}%` }}></div>
+                <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-primary border-2 border-white rounded-full shadow-md" style={{ insetInlineStart: `calc(${allocation}% - 8px)` }}></div>
               </div>
               <div className="flex justify-between text-[10px] font-medium text-on-surface-variant px-1">
                 <span>0%</span>
@@ -605,7 +610,7 @@ function CopyTradeContent() {
                   <Icon name="query_stats" className="text-outline text-sm" />
                   <span className="font-label-caps text-label-caps text-on-surface-variant uppercase text-[10px]">Expected shares</span>
                 </div>
-                <div className="text-right font-data-mono text-xs">
+                <div className="text-end font-data-mono text-xs">
                   {quote.data !== undefined && minShares !== null ? (
                     <>
                       <span className="text-on-surface font-bold">{formatUsdc(quote.data, { maxDecimals: 2 })}</span>

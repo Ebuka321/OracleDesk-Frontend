@@ -3,16 +3,16 @@ import type { Spec } from "@stellar/stellar-sdk/contract";
 import type { ResolutionSpec as BackendResolutionSpec } from "@/lib/api/markets";
 import type { PriceConfig, SignerConfig } from "./generated/resolver";
 import { sha256Hex } from "./trace";
-import { normalizeHash } from "./trace-core";
-import { formatHashHex, isZeroOrEmptyHash } from "./market-question";
+import { formatHashHex } from "./market-question";
 
 export type ResolutionSpecInput =
   | BackendResolutionSpec
   | { kind: "signers"; config: SignerConfig }
-  | { kind: "price"; config: PriceConfig };
+  | { kind: "price"; config: PriceConfig }
+  | { kind: string; [key: string]: unknown };
 
 export interface ResolutionVerificationResult {
-  status: "verified" | "mismatch" | "unconfigured" | "no-spec";
+  status: "verified" | "mismatch" | "unconfigured" | "no-spec" | "unsupported";
   computedHash: string | null;
   onChainHash: string | null;
   reason?: string;
@@ -26,6 +26,8 @@ function specUdt(name: string) {
 /**
  * Builds the Soroban ScVal for SignerConfig struct:
  * Map of [dispute_window, signers, threshold] sorted lexicographically.
+ * Note: signer order is preserved as-is. Neither the contract nor this encoder
+ * canonicalises or sorts signers; callers/agents must sort before committing.
  */
 export function buildSignerConfigScVal(config: {
   dispute_window: bigint | number;
@@ -42,12 +44,14 @@ export function buildSignerConfigScVal(config: {
         },
         specUdt("SignerConfig"),
       );
-    } catch {
-      // Fallback to manual encoding below
+    } catch (err) {
+      console.warn("resolverSpec.nativeToScVal failed for SignerConfig:", err);
+      throw new Error(`Failed to encode SignerConfig via resolverSpec: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   const disputeWindowVal = nativeToScVal(BigInt(config.dispute_window), { type: "u64" });
+  // Note: preserving config.signers order strictly without sorting!
   const signersVal = xdr.ScVal.scvVec(config.signers.map((s) => new Address(s).toScVal()));
   const thresholdVal = nativeToScVal(Number(config.threshold), { type: "u32" });
 
@@ -69,6 +73,15 @@ export function buildPriceConfigScVal(config: {
   reflector: string;
   threshold: bigint | string | number;
 }, resolverSpec?: Spec): xdr.ScVal {
+  if (resolverSpec && typeof (resolverSpec as { nativeToScVal?: unknown }).nativeToScVal === "function") {
+    try {
+      return resolverSpec.nativeToScVal(config, specUdt("PriceConfig"));
+    } catch (err) {
+      console.warn("resolverSpec.nativeToScVal failed for PriceConfig:", err);
+      throw new Error(`Failed to encode PriceConfig via resolverSpec: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Normalize asset ScVal
   let assetVal: xdr.ScVal;
   if ("kind" in config.asset) {
@@ -98,6 +111,31 @@ export function buildPriceConfigScVal(config: {
 }
 
 /**
+ * Known kinds that are supported by the Soroban contract but not yet pinned
+ * with byte-exact cross-repo vectors in the frontend.
+ */
+export const UNSUPPORTED_RESOLVER_KINDS = new Set([
+  "weightedkeys",
+  "weighted_keys",
+  "signersdisputable",
+  "signers_disputable",
+  "committee",
+  "hybrid",
+  "v2",
+  "scaled_price",
+  "twap",
+]);
+
+/**
+ * Returns true if the spec kind is an unpinned / unsupported resolution kind.
+ */
+export function isUnsupportedResolutionKind(spec: ResolutionSpecInput | null | undefined): boolean {
+  if (!spec || typeof spec !== "object") return false;
+  const kind = String(spec.kind || "").toLowerCase();
+  return UNSUPPORTED_RESOLVER_KINDS.has(kind);
+}
+
+/**
  * Encodes the ResolutionSpec enum into an ScVal:
  * ResolutionSpec::Price(PriceConfig) -> Vec[Symbol("Price"), PriceConfig]
  * ResolutionSpec::Signers(SignerConfig) -> Vec[Symbol("Signers"), SignerConfig]
@@ -114,13 +152,7 @@ export function resolutionSpecToScVal(spec: ResolutionSpecInput, resolverSpec?: 
   }
 
   if (spec.kind === "price") {
-    const config = "config" in spec ? {
-      asset: spec.config.asset,
-      direction: spec.config.direction.tag as "Above" | "AtOrAbove" | "Below" | "AtOrBelow",
-      max_staleness: spec.config.max_staleness,
-      reflector: spec.config.reflector,
-      threshold: spec.config.threshold,
-    } : {
+    const config = "config" in spec ? spec.config : {
       asset: spec.asset,
       direction: spec.direction,
       max_staleness: spec.maxStaleness,
@@ -156,7 +188,7 @@ export function formatResolutionSpec(spec: ResolutionSpecInput | null | undefine
     const threshold = "config" in spec ? spec.config.threshold : spec.threshold;
     const disputeWindowSec = Number("config" in spec ? spec.config.dispute_window : spec.disputeWindow);
 
-    const formattedSigners = signers
+    const formattedSigners = (signers || [])
       .map((s) => (s.length > 12 ? `${s.slice(0, 4)}…${s.slice(-4)}` : s))
       .join(", ");
 
@@ -167,7 +199,7 @@ export function formatResolutionSpec(spec: ResolutionSpecInput | null | undefine
           ? `${(disputeWindowSec / 3600).toFixed(0)}h`
           : `${disputeWindowSec}s`;
 
-    return `${threshold} of ${signers.length} signers: ${formattedSigners}, ${windowText} dispute window`;
+    return `${threshold} of ${signers?.length ?? 0} signers: ${formattedSigners}, ${windowText} dispute window`;
   }
 
   if (spec.kind === "price") {
@@ -178,6 +210,10 @@ export function formatResolutionSpec(spec: ResolutionSpecInput | null | undefine
 
     const shortReflector = reflector.length > 12 ? `${reflector.slice(0, 4)}…${reflector.slice(-4)}` : reflector;
     return `Reflector feed ${shortReflector} price ${threshold} ${direction}, ${staleness}s max staleness`;
+  }
+
+  if (isUnsupportedResolutionKind(spec)) {
+    return `Specialized resolution rule (${spec.kind}): verification unsupported in current UI`;
   }
 
   return "Unknown resolution spec";
@@ -214,6 +250,16 @@ export async function verifyResolutionCommitment(
     };
   }
 
+  if (isUnsupportedResolutionKind(spec)) {
+    return {
+      status: "unsupported",
+      computedHash: null,
+      onChainHash: normalizedOnChain,
+      formattedSpec,
+      reason: `Verification for resolution kind '${spec.kind}' is not yet supported in the web client`,
+    };
+  }
+
   try {
     const computedHash = await computeResolutionHash(spec, resolverSpec);
     if (computedHash.toLowerCase() === normalizedOnChain.toLowerCase()) {
@@ -233,12 +279,22 @@ export async function verifyResolutionCommitment(
       reason: "SpecHashMismatch: Revealed resolution spec does not match on-chain commitment hash",
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("Unsupported resolution spec kind")) {
+      return {
+        status: "unsupported",
+        computedHash: null,
+        onChainHash: normalizedOnChain,
+        formattedSpec,
+        reason: message,
+      };
+    }
     return {
       status: "mismatch",
       computedHash: null,
       onChainHash: normalizedOnChain,
       formattedSpec,
-      reason: err instanceof Error ? err.message : "Failed to encode resolution spec XDR",
+      reason: message || "Failed to encode resolution spec XDR",
     };
   }
 }

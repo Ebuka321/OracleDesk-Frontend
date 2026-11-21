@@ -1,14 +1,16 @@
 "use client";
 import { Icon } from "@/components/ui/icon";
 
-import React from "react";
+import React, { useMemo } from "react";
 import type { QuestionIntegrityCheck, QuestionIntegrityStatus } from "@/lib/stellar/market-question";
+import { analyzeTextSafety } from "@/lib/text-safety";
 
 export interface QuestionVerificationBadgeProps {
   status: QuestionIntegrityStatus;
   result?: QuestionIntegrityCheck | null;
   compact?: boolean;
   className?: string;
+  displayedText?: string | null;
 }
 
 export function QuestionVerificationBadge({
@@ -16,8 +18,40 @@ export function QuestionVerificationBadge({
   result,
   compact = false,
   className = "",
+  displayedText,
 }: QuestionVerificationBadgeProps) {
+  // If displayedText is provided or inside result.rawText, check for text safety findings
+  const textToCheck = displayedText ?? result?.rawText;
+  const safety = useMemo(() => analyzeTextSafety(textToCheck), [textToCheck]);
+
   if (status === "verified") {
+    // If text has bidi or invisible characters, do NOT show an unqualified "verified"
+    if (safety.hasBidiOrInvisible) {
+      return (
+        <span
+          role="alert"
+          title={`Verified hash, but text contains deceptive/hidden characters: ${safety.findings.map((f) => f.safeLabel).join(", ")}`}
+          className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-error bg-error/15 px-2 py-0.5 rounded border border-error shrink-0 ${className}`}
+        >
+          <Icon name="warning" className="text-[13px]" />
+          Verified, but contains hidden or deceptive characters
+        </span>
+      );
+    }
+
+    // Softer warning for confusables
+    if (safety.hasConfusables) {
+      return (
+        <span
+          title={`Verified hash, but contains mixed-script look-alike characters (${safety.findings.length} findings)`}
+          className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-600/30 shrink-0 ${className}`}
+        >
+          <Icon name="verified" filled className="text-[13px]" />
+          Question Verified (confusable warnings)
+        </span>
+      );
+    }
+
     return (
       <span
         title={`Verified: Text matches on-chain question_hash commitment (${result?.committedHash?.slice(0, 8)}…)`}

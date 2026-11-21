@@ -54,6 +54,15 @@ export class JournalUnavailableError extends Error {
   }
 }
 
+export class TraceLockUnavailableError extends Error {
+  constructor(
+    message = "Cross-tab payment lock is unavailable (no Web Locks and no IndexedDB claim store). OracleDesk won't sign an x402 payment unprotected.",
+  ) {
+    super(message);
+    this.name = "TraceLockUnavailableError";
+  }
+}
+
 export interface PaymentJournal {
   /** Resolves once the write is durably committed. */
   put(entry: JournalEntry): Promise<void>;
@@ -62,16 +71,34 @@ export interface PaymentJournal {
   findOpen(wallet: string, network: X402Network, onChainTraceId: string): Promise<JournalEntry | undefined>;
   list(wallet: string, network: X402Network): Promise<JournalEntry[]>;
   update(id: string, patch: Partial<Omit<JournalEntry, "id" | "wallet" | "network" | "onChainTraceId">>): Promise<JournalEntry>;
+  /**
+   * Atomically claims an exclusive lock key inside IndexedDB (single readwrite
+   * transaction). Returns a release callback when acquired, or `null` when
+   * another tab holds a non-expired claim.
+   */
+  acquireClaim?(key: string, ttlMs?: number): Promise<(() => Promise<void>) | null>;
 }
 
 // ─── IndexedDB journal ──────────────────────────────────────────────────────
 
 const DB_NAME = "oracledesk-x402";
+const DB_VERSION = 2;
 const STORE = "payments";
+const CLAIMS_STORE = "claims";
 const BY_TRACE = "byTrace";
 const BY_WALLET = "byWallet";
 /** Money records: ask the browser to flush to disk before reporting the write complete. */
 const STRICT: IDBTransactionOptions = { durability: "strict" };
+
+export const TRACE_CLAIM_TTL_MS = 30_000;
+export const TRACE_CLAIM_POLL_MS = 50;
+export const TRACE_CLAIM_MAX_WAIT_MS = 35_000;
+
+interface TraceClaimRecord {
+  key: string;
+  owner: string;
+  expiresAt: number;
+}
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -92,20 +119,92 @@ function openDatabase(factory: IDBFactory): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let request: IDBOpenDBRequest;
     try {
-      request = factory.open(DB_NAME, 1);
+      request = factory.open(DB_NAME, DB_VERSION);
     } catch {
       reject(new JournalUnavailableError());
       return;
     }
     request.onupgradeneeded = () => {
-      const store = request.result.createObjectStore(STORE, { keyPath: "id" });
-      store.createIndex(BY_TRACE, ["wallet", "network", "onChainTraceId"]);
-      store.createIndex(BY_WALLET, ["wallet", "network"]);
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE)) {
+        const store = db.createObjectStore(STORE, { keyPath: "id" });
+        store.createIndex(BY_TRACE, ["wallet", "network", "onChainTraceId"]);
+        store.createIndex(BY_WALLET, ["wallet", "network"]);
+      }
+      if (!db.objectStoreNames.contains(CLAIMS_STORE)) {
+        db.createObjectStore(CLAIMS_STORE, { keyPath: "key" });
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(new JournalUnavailableError());
     request.onblocked = () => reject(new JournalUnavailableError());
   });
+}
+
+let claimCounter = 0;
+function makeClaimOwner(): string {
+  return `${Date.now().toString(36)}-${++claimCounter}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function acquireIdbClaim(
+  getDb: () => Promise<IDBDatabase>,
+  key: string,
+  ttlMs: number,
+): Promise<(() => Promise<void>) | null> {
+  const db = await getDb();
+  const owner = makeClaimOwner();
+  const now = Date.now();
+  const record: TraceClaimRecord = { key, owner, expiresAt: now + ttlMs };
+
+  let acquired = false;
+  try {
+    const tx = db.transaction(CLAIMS_STORE, "readwrite", STRICT);
+    const store = tx.objectStore(CLAIMS_STORE);
+    const existing = await requestResult(store.get(key) as IDBRequest<TraceClaimRecord | undefined>);
+    if (existing && existing.expiresAt > now) {
+      await transactionDone(tx);
+      return null;
+    }
+    if (existing) {
+      // Crashed tab's claim has expired — safely replace it inside this readwrite tx.
+      store.put(record);
+    } else {
+      // Atomic insert: fails with ConstraintError if another tx inserted concurrently.
+      store.add(record);
+    }
+    await transactionDone(tx);
+    acquired = true;
+  } catch (error) {
+    const name = (error as { name?: string } | null)?.name;
+    if (name === "ConstraintError" || name === "AbortError") {
+      return null;
+    }
+    throw error;
+  }
+
+  if (!acquired) return null;
+
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    try {
+      const tx = db.transaction(CLAIMS_STORE, "readwrite", STRICT);
+      const store = tx.objectStore(CLAIMS_STORE);
+      const current = await requestResult(store.get(key) as IDBRequest<TraceClaimRecord | undefined>);
+      if (current?.owner === owner) {
+        store.delete(key);
+      }
+      await transactionDone(tx);
+    } catch {
+      // Best-effort release; TTL guarantees safety if the DB closed.
+    }
+    try {
+      broadcastChannel()?.postMessage({ type: "claim-released", key });
+    } catch {
+      // ignore
+    }
+  };
 }
 
 /**
@@ -163,6 +262,9 @@ export function createJournal(factory: IDBFactory | undefined = globalThis.index
       announceJournalChange(next);
       return next;
     },
+    acquireClaim(key, ttlMs = TRACE_CLAIM_TTL_MS) {
+      return acquireIdbClaim(database, key, ttlMs);
+    },
   };
 }
 
@@ -218,15 +320,79 @@ export function subscribeJournalChanges(listener: (change: JournalChange) => voi
   };
 }
 
+export interface TraceLockOptions {
+  /** Journal whose IndexedDB `claims` store is used when Web Locks is absent. */
+  journal?: PaymentJournal | null;
+  /** Claim TTL for the IndexedDB fallback (crashed-tab expiry). Defaults to `TRACE_CLAIM_TTL_MS`. */
+  ttlMs?: number;
+  /** Maximum time to wait for a contended IndexedDB claim before failing closed. */
+  maxWaitMs?: number;
+}
+
 /**
- * Runs `fn` while holding an exclusive Web Lock for one wallet's trace, so two
- * tabs never sign or redeliver for the same trace at once. Without Web Locks
- * (older browsers, Node) it runs directly.
+ * Runs `fn` while holding an exclusive cross-tab lock for one wallet's trace,
+ * so two tabs never sign or redeliver for the same trace at once.
+ *
+ * Strategy (fail-closed):
+ *  1. Prefer `navigator.locks` when available (atomic, instant release on tab crash).
+ *  2. Otherwise acquire an atomic claim record in the IndexedDB `claims` store
+ *     (`add` inside a single `readwrite` transaction; expired claims from crashed
+ *     tabs are safely replaced after `ttlMs`).
+ *  3. If neither Web Locks nor IndexedDB is available, refuse to sign by throwing
+ *     `TraceLockUnavailableError` rather than running unprotected.
  */
-export function withTraceLock<T>(wallet: string, network: X402Network, onChainTraceId: string, fn: () => Promise<T>): Promise<T> {
+export async function withTraceLock<T>(
+  wallet: string,
+  network: X402Network,
+  onChainTraceId: string,
+  fn: () => Promise<T>,
+  opts: TraceLockOptions = {},
+): Promise<T> {
+  const lockKey = `${CHANNEL}:${network}:${wallet}:${onChainTraceId}`;
   const locks = (globalThis.navigator as Navigator | undefined)?.locks;
-  if (!locks) return fn();
-  return locks.request(`${CHANNEL}:${network}:${wallet}:${onChainTraceId}`, fn) as Promise<T>;
+  if (locks) {
+    return locks.request(lockKey, fn) as Promise<T>;
+  }
+
+  let acquire: ((key: string, ttlMs?: number) => Promise<(() => Promise<void>) | null>) | null =
+    opts.journal?.acquireClaim ?? null;
+
+  if (!acquire && typeof globalThis.indexedDB !== "undefined") {
+    const factory = globalThis.indexedDB;
+    let dbPromise: Promise<IDBDatabase> | null = null;
+    const getDb = () => {
+      dbPromise ??= openDatabase(factory).catch((err) => {
+        dbPromise = null;
+        throw err;
+      });
+      return dbPromise;
+    };
+    acquire = (key, ttl) => acquireIdbClaim(getDb, key, ttl ?? TRACE_CLAIM_TTL_MS);
+  }
+
+  if (!acquire) {
+    throw new TraceLockUnavailableError();
+  }
+
+  const ttlMs = opts.ttlMs ?? TRACE_CLAIM_TTL_MS;
+  const maxWaitMs = opts.maxWaitMs ?? TRACE_CLAIM_MAX_WAIT_MS;
+  const deadline = Date.now() + maxWaitMs;
+
+  let release: (() => Promise<void>) | null = null;
+  while (true) {
+    release = await acquire(lockKey, ttlMs);
+    if (release) break;
+    if (Date.now() >= deadline) {
+      throw new TraceLockUnavailableError("Another tab holds the payment lock for this trace and did not release it in time.");
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, TRACE_CLAIM_POLL_MS));
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await release();
+  }
 }
 
 // ─── Payment header inspection ──────────────────────────────────────────────

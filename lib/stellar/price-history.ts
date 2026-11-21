@@ -1,5 +1,6 @@
 import type { rpc } from "@stellar/stellar-sdk";
 import { rpcServer } from "./clients";
+import { withRpcPriority } from "./rpc-scheduler";
 import { CONTRACTS, NETWORK_PASSPHRASE } from "./config";
 import { MathError, priceYesBps, seedReserves } from "./generated/fpmm";
 import { decodeMarketCoreEvent, marketTopicFilter, type DecodedEvent } from "./events";
@@ -138,7 +139,7 @@ export function rpcPriceHistorySource(
 
   return {
     async load(marketId: bigint, since?: CacheState): Promise<PriceHistoryBatch> {
-      const health = await server.getHealth();
+      const health = await withRpcPriority({ priority: "background", tag: "price-history" }, () => server.getHealth());
       const oldestLedger = health.oldestLedger;
       const latestLedger = health.latestLedger;
       const filters = marketTopicFilter(marketId, PRICE_HISTORY_FILTERS);
@@ -150,9 +151,11 @@ export function rpcPriceHistorySource(
       let cursor = retention ? "" : (since?.cursor ?? "");
 
       const readPage = async () => {
-        const response = cursor
-          ? await server.getEvents({ filters, cursor, limit: pageLimit })
-          : await server.getEvents({ filters, startLedger: Math.max(1, oldestLedger), endLedger: latestLedger + 1, limit: pageLimit });
+        const response = await withRpcPriority({ priority: "background", tag: "price-history" }, () =>
+          cursor
+            ? server.getEvents({ filters, cursor, limit: pageLimit })
+            : server.getEvents({ filters, startLedger: Math.max(1, oldestLedger), endLedger: latestLedger + 1, limit: pageLimit }),
+        );
         events.push(...response.events);
         const previous = cursor;
         cursor = response.cursor ?? "";
@@ -198,8 +201,9 @@ export function rpcPriceHistorySource(
 // network switch can never mix two histories.
 
 const DB_NAME = "oracledesk-history";
-const DB_VERSION = 1;
+export const DB_VERSION = 2;
 const STORE = "series";
+export const LIFECYCLE_STORE = "lifecycle";
 
 export interface SerializedPricePoint {
   ledger: number;
@@ -222,6 +226,10 @@ export interface CachedSeries {
 
 export function seriesCacheKey(marketId: bigint | string): string {
   return `${NETWORK_PASSPHRASE}|${CONTRACTS.marketCore}|${marketId}`;
+}
+
+export function lifecycleCacheKey(marketId: bigint | string): string {
+  return `${NETWORK_PASSPHRASE}|${CONTRACTS.marketCore}|${CONTRACTS.reasoningRegistry}|${CONTRACTS.resolver}|${marketId}`;
 }
 
 export function serializePoints(points: readonly PricePoint[]): SerializedPricePoint[] {
@@ -266,11 +274,64 @@ function openDb(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+      if (!db.objectStoreNames.contains(LIFECYCLE_STORE)) db.createObjectStore(LIFECYCLE_STORE);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("indexedDB open failed"));
     request.onblocked = () => reject(new Error("indexedDB blocked"));
   });
+}
+
+export interface CachedLifecycle {
+  v: 1;
+  events: unknown[];
+  toLedger: number;
+  cursors: Record<string, string | null>;
+  coverage: Coverage;
+}
+
+const lifecycleMemoryCache = new Map<string, CachedLifecycle>();
+
+export async function readLifecycleCache(key: string): Promise<CachedLifecycle | null> {
+  if (!idbAvailable()) return lifecycleMemoryCache.get(key) ?? null;
+  try {
+    const db = await openDb();
+    const value = await new Promise<CachedLifecycle | null>((resolve, reject) => {
+      const request = db.transaction(LIFECYCLE_STORE, "readonly").objectStore(LIFECYCLE_STORE).get(key);
+      request.onsuccess = () => resolve((request.result as CachedLifecycle | undefined) ?? null);
+      request.onerror = () => reject(request.error ?? new Error("indexedDB read failed"));
+    });
+    db.close();
+    if (!value || value.v !== 1 || !Array.isArray(value.events)) {
+      return lifecycleMemoryCache.get(key) ?? null;
+    }
+    lifecycleMemoryCache.set(key, value);
+    return value;
+  } catch {
+    return lifecycleMemoryCache.get(key) ?? null;
+  }
+}
+
+export async function writeLifecycleCache(key: string, value: CachedLifecycle): Promise<boolean> {
+  lifecycleMemoryCache.set(key, value);
+  if (lifecycleMemoryCache.size > MEMORY_CACHE_MAX) {
+    lifecycleMemoryCache.delete(lifecycleMemoryCache.keys().next().value!);
+  }
+  if (!idbAvailable()) return false;
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(LIFECYCLE_STORE, "readwrite");
+      tx.objectStore(LIFECYCLE_STORE).put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("indexedDB write failed"));
+      tx.onabort = () => reject(tx.error ?? new Error("indexedDB write aborted"));
+    });
+    db.close();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Read the cached series, falling back to the in-memory copy when IndexedDB

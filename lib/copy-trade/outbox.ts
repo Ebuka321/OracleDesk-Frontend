@@ -52,15 +52,38 @@ const changed = () => listeners.forEach((fn) => fn());
 export const subscribeOutbox = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 export const emptyOutbox = () => EMPTY;
 
+export const RECONCILE_LEASE_MS = 30_000;
+export const RECONCILE_LEASE_SETTLE_MS = 30;
+const RECONCILE_LOCK_PREFIX = "oracledesk-copy-reconcile:";
+
+let reconcileTabId: string | undefined;
+let reconcileSeq = 0;
+function nextReconcileToken(): string {
+  reconcileTabId ??= `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `${reconcileTabId}:${++reconcileSeq}:${Math.random().toString(36).slice(2)}`;
+}
+
+/** Reads directly from localStorage, bypassing the in-memory read cache. Returns null if storage is unavailable. */
+export function readOutboxFromStorage(address: string): OutboxEntry[] | null {
+  if (!address || typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(key(address));
+    const parsed: unknown = JSON.parse(raw ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(validEntry)
+      .slice(-MAX_OUTBOX_ENTRIES)
+      .map((entry) => ({ ...entry, txHash: entry.txHash?.toLowerCase() ?? null }));
+  } catch {
+    return null;
+  }
+}
+
 /** Returns a stable snapshot for useSyncExternalStore; storage is always optional. */
 export function readOutbox(address: string | null): readonly OutboxEntry[] {
   if (!address || typeof window === "undefined") return EMPTY;
   const cached = memory.get(address); if (cached) return cached;
-  let entries: OutboxEntry[] = [];
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(key(address)) ?? "[]");
-    if (Array.isArray(parsed)) entries = parsed.filter(validEntry).slice(-MAX_OUTBOX_ENTRIES).map((entry) => ({ ...entry, txHash: entry.txHash?.toLowerCase() ?? null }));
-  } catch { /* blocked, full or malformed storage falls back to this tab's memory */ }
+  const entries = readOutboxFromStorage(address) ?? [];
   memory.set(address, entries);
   return entries;
 }
@@ -77,8 +100,27 @@ export function writeOutbox(address: string, entries: readonly OutboxEntry[]): b
   changed();
   return persisted;
 }
+
+/**
+ * Performs a fresh read-modify-write against localStorage so concurrent tabs
+ * updating different entries never clobber each other with a stale memory cache.
+ * Falls back to the in-memory snapshot only when localStorage is unavailable.
+ */
+export function mutateOutbox(address: string, mutator: (current: OutboxEntry[]) => OutboxEntry[]): boolean {
+  const fresh = readOutboxFromStorage(address);
+  const base = fresh ?? [...(memory.get(address) ?? [])];
+  return writeOutbox(address, mutator(base));
+}
+
+export function appendOutboxEntry(address: string, entry: OutboxEntry): boolean {
+  return mutateOutbox(address, (entries) => {
+    if (entries.some((e) => e.copyTradeId === entry.copyTradeId)) return entries;
+    return [...entries, { ...entry, txHash: entry.txHash?.toLowerCase() ?? null }];
+  });
+}
+
 export function updateOutbox(address: string, id: string, patch: Partial<OutboxEntry>) {
-  return writeOutbox(address, readOutbox(address).map((entry) => {
+  return mutateOutbox(address, (entries) => entries.map((entry) => {
     if (entry.copyTradeId !== id) return entry;
     if (isTerminal(entry) && patch.state && patch.state !== entry.state) return entry;
     // A backend confirm overwrites the hash. Once chosen, never substitute a
@@ -89,6 +131,116 @@ export function updateOutbox(address: string, id: string, patch: Partial<OutboxE
 }
 /** Refresh local snapshots when another tab writes; same-hash confirms are idempotent. */
 export function refreshOutbox(address: string) { memory.delete(address); changed(); }
+
+interface ReconcileLease {
+  token: string;
+  expiresAt: number;
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Acquires a non-blocking cross-tab claim for reconciling one copy-trade entry.
+ * Uses Web Locks (`ifAvailable: true`) when present, and a hardened localStorage
+ * lease (unique token + settle re-read) otherwise. Returns `{ ran: false }` when
+ * another tab already holds the claim.
+ */
+export async function withCopyTradeReconcileClaim<T>(
+  address: string,
+  copyTradeId: string,
+  fn: () => Promise<T>,
+): Promise<{ ran: true; value: T } | { ran: false }> {
+  const lockName = `${RECONCILE_LOCK_PREFIX}${address}:${copyTradeId}`;
+  const locks = (globalThis.navigator as Navigator | undefined)?.locks;
+  if (locks) {
+    return locks.request(lockName, { mode: "exclusive", ifAvailable: true }, async (lock) => {
+      if (!lock) return { ran: false as const };
+      const value = await fn();
+      return { ran: true as const, value };
+    });
+  }
+
+  // Fallback: hardened localStorage lease with unique token + settle verification.
+  const storage = typeof window !== "undefined" ? (() => { try { return window.localStorage; } catch { return null; } })() : null;
+  if (!storage) {
+    const value = await fn();
+    return { ran: true, value };
+  }
+
+  const leaseKey = `oracledesk_copy_reconcile_lease:${address}:${copyTradeId}`;
+  const readLease = (): ReconcileLease | null => {
+    try {
+      const raw = storage.getItem(leaseKey);
+      return raw ? (JSON.parse(raw) as ReconcileLease) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const existing = readLease();
+  if (existing && existing.expiresAt > Date.now()) {
+    return { ran: false };
+  }
+
+  const token = nextReconcileToken();
+  const lease: ReconcileLease = { token, expiresAt: Date.now() + RECONCILE_LEASE_MS };
+  try {
+    storage.setItem(leaseKey, JSON.stringify(lease));
+  } catch {
+    return { ran: false };
+  }
+
+  await sleepMs(RECONCILE_LEASE_SETTLE_MS);
+  const confirmed = readLease();
+  if (!confirmed || confirmed.token !== token || confirmed.expiresAt <= Date.now()) {
+    return { ran: false };
+  }
+
+  try {
+    const value = await fn();
+    return { ran: true, value };
+  } finally {
+    if (readLease()?.token === token) {
+      try { storage.removeItem(leaseKey); } catch { /* ignore */ }
+    }
+  }
+}
+
+/**
+ * Reconciles a single outbox entry under the cross-tab claim, re-reading fresh
+ * state from localStorage inside the claim so a tab never duplicates a confirm
+ * completed by a peer.
+ */
+export async function reconcileOutboxEntryCrossTab(
+  address: string,
+  copyTradeId: string,
+  deps: ReconcileDeps,
+  opts?: { forceImmediate?: boolean },
+): Promise<{ claimed: boolean; entry?: OutboxEntry }> {
+  const result = await withCopyTradeReconcileClaim(address, copyTradeId, async () => {
+    const freshList = readOutboxFromStorage(address) ?? [...readOutbox(address)];
+    const current = freshList.find((e) => e.copyTradeId === copyTradeId);
+    if (!current || isTerminal(current) || current.dismissed) return current;
+
+    const resume = current.needsSession && deps.sessionId && current.pausedSessionId !== deps.sessionId;
+    const candidate = resume || opts?.forceImmediate ? { ...current, nextAttemptAt: 0 } : current;
+    if (candidate.txHash && !candidate.needsSession && candidate.nextAttemptAt <= deps.now()) {
+      updateOutbox(address, copyTradeId, { state: "confirming" });
+    }
+    const next = await reconcileEntry(candidate, address, deps);
+    if (next !== candidate) {
+      const latest = (readOutboxFromStorage(address) ?? [...readOutbox(address)]).find((e) => e.copyTradeId === copyTradeId);
+      if (latest && !latest.dismissed && latest.txHash === current.txHash) {
+        updateOutbox(address, copyTradeId, next);
+      }
+    }
+    return next;
+  });
+
+  return result.ran ? { claimed: true, entry: result.value } : { claimed: false };
+}
 
 export interface ReconcileDeps {
   now: () => number;

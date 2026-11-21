@@ -1,31 +1,49 @@
 "use client";
 
 import React from "react";
-import { useContractIntegrity, type IntegrityResult } from "@/lib/stellar/contract-check";
+import { useIntegrityMonitor, integrityMonitor, type ExecutableChange } from "@/lib/stellar/integrity-monitor";
+import { type IntegrityResult } from "@/lib/stellar/contract-check";
 import { explorerAccount } from "@/lib/stellar/config";
-import { AlertTriangle, ShieldAlert, ExternalLink, RefreshCw } from "lucide-react";
+import { AlertTriangle, ShieldAlert, CheckCircle2, ExternalLink, RefreshCw } from "lucide-react";
 
 export function IntegrityBanner() {
-  const { data: integrity, isLoading, refetch, isFetching } = useContractIntegrity();
+  const { status, results: integrity, changes } = useIntegrityMonitor();
 
-  if (isLoading || !integrity) {
+  if (status === "initial") {
     return null;
   }
 
-  const results = Object.values(integrity) as IntegrityResult[];
+  if (status === "rechecking") {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="w-full bg-primary/10 border-b border-primary/30 text-on-surface px-4 py-2 text-xs z-50 sticky top-0 backdrop-blur-md"
+      >
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="w-3.5 h-3.5 text-primary animate-spin shrink-0" />
+            <span>Verifying contract specifications after detected on-chain upgrade…</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const results = integrity ? (Object.values(integrity) as IntegrityResult[]) : [];
   const failingContracts = results.filter(
     (r) => r.status === "mismatch" || r.status === "not-found" || r.status === "wrong-kind",
   );
+  const compatibleContracts = results.filter((r) => r.status === "compatible");
   const uncheckedContracts = results.filter((r) => r.status === "unchecked");
-
   const allNotFound = results.length > 0 && results.every((r) => r.status === "not-found");
 
-  if (failingContracts.length > 0) {
+  if (status === "failed" || failingContracts.length > 0) {
     return (
       <div
         role="alert"
         aria-live="assertive"
-        className="w-full bg-destructive/15 border-b border-destructive/40 text-destructive-foreground px-4 py-3 text-sm z-50 sticky top-0 backdrop-blur-md"
+        className="w-full bg-destructive/15 border-b border-destructive/40 text-destructive-foreground px-4 py-3 text-sm backdrop-blur-md"
       >
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
           <div className="flex items-start gap-3">
@@ -66,13 +84,47 @@ export function IntegrityBanner() {
             </div>
           </div>
           <button
-            onClick={() => void refetch()}
-            disabled={isFetching}
-            className="self-end md:self-center px-3 py-1.5 rounded bg-destructive/20 hover:bg-destructive/30 text-destructive text-xs font-medium inline-flex items-center gap-1.5 transition-colors shrink-0 disabled:opacity-50"
+            onClick={() => void integrityMonitor.probe()}
+            className="self-end md:self-center px-3 py-1.5 rounded bg-destructive/20 hover:bg-destructive/30 text-destructive text-xs font-medium inline-flex items-center gap-1.5 transition-colors shrink-0"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
+            <RefreshCw className="w-3.5 h-3.5" />
             Recheck
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (compatibleContracts.length > 0) {
+    const missingCaps = compatibleContracts.flatMap((c) =>
+      Object.entries(c.capabilities ?? {})
+        .filter(([, compat]) => compat && !compat.ok)
+        .map(([cap, compat]) => ({
+          cap,
+          reason: (compat as { ok: false; reason: string }).reason,
+        })),
+    );
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="w-full bg-surface-container-low border-b border-outline-variant text-on-surface px-4 py-2 text-xs backdrop-blur-md"
+      >
+        <div className="max-w-7xl mx-auto">
+          <details>
+            <summary className="cursor-pointer font-medium text-on-surface-variant hover:text-on-surface">
+              Some newer features are unavailable on this deployment
+            </summary>
+            {missingCaps.length > 0 && (
+              <ul className="mt-2 space-y-1 font-mono text-[11px] text-on-surface-variant">
+                {missingCaps.map((m) => (
+                  <li key={m.cap}>
+                    <span className="font-semibold text-on-surface">{m.cap}</span>: {m.reason}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </details>
         </div>
       </div>
     );
@@ -84,7 +136,7 @@ export function IntegrityBanner() {
       <div
         role="status"
         aria-live="polite"
-        className="w-full bg-amber-500/15 border-b border-amber-500/30 text-amber-200 px-4 py-2 text-xs z-40 sticky top-0 backdrop-blur-md"
+        className="w-full bg-amber-500/15 border-b border-amber-500/30 text-amber-200 px-4 py-2 text-xs backdrop-blur-md"
       >
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -96,11 +148,10 @@ export function IntegrityBanner() {
             </span>
           </div>
           <button
-            onClick={() => void refetch()}
-            disabled={isFetching}
+            onClick={() => void integrityMonitor.probe()}
             className="text-amber-300 hover:text-amber-100 font-medium inline-flex items-center gap-1 shrink-0"
           >
-            <RefreshCw className={`w-3 h-3 ${isFetching ? "animate-spin" : ""}`} />
+            <RefreshCw className="w-3 h-3" />
             Retry
           </button>
         </div>

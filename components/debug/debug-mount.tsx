@@ -10,7 +10,7 @@ const DebugPanel = DEBUG_ENABLED ? dynamic(() => import("./debug-panel"), { ssr:
 
 const OPEN_KEY = "oracledesk_debug_open";
 
-export type DebugTab = "config" | "wallet" | "cache" | "simulations" | "rpc" | "errors";
+export type DebugTab = "config" | "wallet" | "cache" | "simulations" | "rpc" | "errors" | "storage";
 
 /** Opens with ?debug=1 (or ?debug=rpc) or Ctrl/Cmd+Shift+D. "Open" lives in sessionStorage only. */
 export function DebugMount() {

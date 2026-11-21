@@ -3,6 +3,8 @@ import { Icon } from "@/components/ui/icon";
 
 import React, { useCallback, useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { useDirection } from "@/components/layout/DirectionProvider";
+import { slideIn } from "@/lib/motion/directional";
 import { useBurstFeed } from "@/lib/realtime/useBurst";
 import { formatFeedTime } from "@/lib/realtime/format";
 import { RealtimeProfiler } from "@/components/realtime-profiler";
@@ -15,13 +17,14 @@ import { BACKEND_CATEGORIES, BACKEND_CATEGORY_LABELS } from "@/lib/stellar/categ
 import { NETWORK_LABEL } from "@/lib/stellar/config";
 import { VirtualList } from "@/components/ui/virtual-list";
 import { QuestionVerificationBadge } from "@/components/question-verification-badge";
+import { SafeText } from "@/components/safe-text";
 import { bytesToHex } from "@/lib/stellar/typed-call";
 import { userMessage } from "@/lib/errors/display";
 
 const SourceTag = ({ source }: { source: "chain" | "backend" }) => (
   <span
     title={source === "chain" ? "Read live from the market contract" : "OracleDesk backend estimate; may lag the chain"}
-    className={`ml-1 text-[9px] font-bold uppercase px-1 rounded ${source === "chain" ? "bg-secondary-container text-on-secondary-container" : "bg-surface-container-highest text-on-surface-variant"}`}
+    className={`ms-1 text-[9px] font-bold uppercase px-1 rounded ${source === "chain" ? "bg-secondary-container text-on-secondary-container" : "bg-surface-container-highest text-on-surface-variant"}`}
   >
     {source}
   </span>
@@ -50,9 +53,9 @@ const FilterBar = ({
       <div className="flex flex-col lg:flex-row gap-4 justify-between items-center">
         <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
           <div className="relative flex-grow min-w-[240px]">
-            <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 text-outline" />
+            <Icon name="search" className="absolute start-3 top-1/2 -translate-y-1/2 text-outline" />
             <input 
-              className="w-full pl-10 pr-4 py-2 bg-surface border border-outline-variant rounded-lg text-body-md focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all" 
+              className="w-full ps-10 pe-4 py-2 bg-surface border border-outline-variant rounded-lg text-body-md focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all" 
               placeholder="Search markets, assets, or events..." 
               type="text"
             />
@@ -114,8 +117,16 @@ const MarketCard = ({ href, category, onChainMarketId, reasoningTraces, expiry, 
   const chain = useOnChainMarket(onChainMarketId);
   const view = chain.data;
   const fromChain = Boolean(view);
-  const yesProb = view ? Math.round(view.yesBps / 100) : backendYesProb ?? 50;
+  const provisional = useProvisionalPrice(onChainMarketId);
+  const baseYesBps = view ? view.yesBps : (backendYesProb !== null && backendYesProb !== undefined ? Math.round(backendYesProb * 100) : 5000);
+  const reconciled = reconcileDisplayPrice(baseYesBps, view?.ledger, provisional);
+  const yesProb = Math.round(reconciled.priceYesBps / 100);
   const noProb = 100 - yesProb;
+  const isProvisional = reconciled.isProvisional;
+  const priceSource: "chain" | "backend" | "provisional" = isProvisional ? "provisional" : fromChain ? "chain" : "backend";
+  const priceLedger = isProvisional ? reconciled.ledger : view?.ledger ?? null;
+  const priceReadAt = isProvisional ? provisional?.receivedAt : fromChain ? chain.dataUpdatedAt : undefined;
+
   const liquidity = view
     ? formatUsdcDisplay(view.market.sets_minted)
     : backendLiquidity ?? "—";
@@ -129,9 +140,15 @@ const MarketCard = ({ href, category, onChainMarketId, reasoningTraces, expiry, 
     marketId,
     onChainMarketId,
     displayedQuestion: title,
-    metaUri: view?.market.meta_uri ?? metaUri,
-    questionHash: view?.market.question_hash ?? questionHash,
+    metaUri: view?.market.meta_uri ?? null,
+    questionHash: view?.market.question_hash ?? null,
+    hasChainRead: fromChain,
+    chainMarket: view?.market,
   });
+
+  const displayTitle = questionIntegrity.data?.status === "verified" && questionIntegrity.data.committedQuestion
+    ? questionIntegrity.data.committedQuestion
+    : title;
 
   const cardContent = (
     <>
@@ -156,6 +173,7 @@ const MarketCard = ({ href, category, onChainMarketId, reasoningTraces, expiry, 
               <QuestionVerificationBadge
                 status={questionIntegrity.data.status}
                 result={questionIntegrity.data}
+                displayedText={title}
                 compact={true}
               />
             )}
@@ -165,19 +183,20 @@ const MarketCard = ({ href, category, onChainMarketId, reasoningTraces, expiry, 
 
         {questionIntegrity.data?.status === "mismatch" && (
           <div className="mb-3">
-            <QuestionVerificationBadge status="mismatch" result={questionIntegrity.data} />
+            <QuestionVerificationBadge status="mismatch" result={questionIntegrity.data} displayedText={title} />
           </div>
         )}
 
         <Link href={href} className="block">
           <h3 className="font-headline-sm text-headline-sm text-on-surface mb-6 group-hover:text-primary transition-colors line-clamp-3">
-            {title}
+            <SafeText text={title} />
+            {displayTitle}
           </h3>
         </Link>
         <div className="space-y-4">
           <div>
             <div className="flex justify-between text-label-caps font-label-caps mb-2">
-              <span className="text-secondary">YES {yesProb}%<SourceTag source={fromChain ? "chain" : "backend"} /></span>
+              <span className="text-secondary">YES {yesProb}%<SourceTag source={priceSource} ledger={priceLedger} readAt={priceReadAt} /></span>
               <span className="text-tertiary">NO {noProb}%</span>
             </div>
             <div className="w-full h-2 rounded-full bg-outline-variant overflow-hidden flex">
@@ -245,6 +264,7 @@ const MarketCard = ({ href, category, onChainMarketId, reasoningTraces, expiry, 
 const TradingFeed = () => {
   const { rows, burst } = useBurstFeed({ capacity: 8, type: "TRADE_EXECUTED" });
   const reduceMotion = useReducedMotion();
+  const dir = useDirection();
   const feed = rows.flatMap(event => {
     if (event.type !== "TRADE_EXECUTED") return [];
     const data = event.payload;
@@ -263,13 +283,13 @@ const TradingFeed = () => {
     const cells = <>
       <td className="py-3 text-on-surface-variant">{row.time}</td>
       <td className="py-3">{row.market}</td>
-      <td className="py-3 text-right">{row.size}</td>
-      <td className={`py-3 text-right ${row.color} font-bold`}>{row.bet}</td>
-      <td className="py-3 text-right">{row.prob}</td>
+      <td className="py-3 text-end">{row.size}</td>
+      <td className={`py-3 text-end ${row.color} font-bold`}>{row.bet}</td>
+      <td className="py-3 text-end">{row.prob}</td>
     </>;
     const className = "hover:bg-surface-container transition-colors border-b border-outline-variant/30";
     return animate
-      ? <motion.tr key={row.key} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className={className}>{cells}</motion.tr>
+      ? <motion.tr key={row.key} {...slideIn(dir, 20)} className={className}>{cells}</motion.tr>
       : <tr key={row.key} className={className}>{cells}</tr>;
   });
 
@@ -282,14 +302,14 @@ const TradingFeed = () => {
       {burst && <p className="text-xs text-on-surface-variant mb-2">{burst.count} trades in the last second{burst.overflow ? ` · ${burst.overflow} more events while this tab was hidden` : ""}.</p>}
       <div className="terminal-log-flow border border-outline-variant rounded-xl overflow-hidden bg-white">
         <div className="p-4 overflow-x-auto">
-          <table className="w-full text-left">
+          <table className="w-full text-start">
             <thead>
               <tr className="border-b border-outline-variant">
                 <th className="pb-3 text-label-caps text-on-surface-variant">Time</th>
                 <th className="pb-3 text-label-caps text-on-surface-variant">Market</th>
-                <th className="pb-3 text-label-caps text-on-surface-variant text-right">Size</th>
-                <th className="pb-3 text-label-caps text-on-surface-variant text-right">Bet</th>
-                <th className="pb-3 text-label-caps text-on-surface-variant text-right">Probability</th>
+                <th className="pb-3 text-label-caps text-on-surface-variant text-end">Size</th>
+                <th className="pb-3 text-label-caps text-on-surface-variant text-end">Bet</th>
+                <th className="pb-3 text-label-caps text-on-surface-variant text-end">Probability</th>
               </tr>
             </thead>
             <tbody key={animate ? "animated" : "static"} className="font-data-mono text-body-md">

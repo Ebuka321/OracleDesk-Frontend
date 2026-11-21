@@ -8,6 +8,10 @@ import { TradeAttributionView } from "@/components/trade-attribution-view";
 import { TradeAttributionMatch, attributeTradesToTraces, flagUnattributedTrades, convertTraceToRecord } from "@/lib/services/trade-attribution";
 import { listTraces } from "@/lib/api/traces";
 
+export function generateStaticParams() {
+  return [{ id: "fallback" }];
+}
+
 export default function MarketTradesPage() {
   const params = useParams();
   const marketId = params.id as string;

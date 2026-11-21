@@ -7,7 +7,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useMarket, useMarketQuestionIntegrity } from "@/lib/hooks/useMarkets";
 import { QuestionVerificationBadge } from "@/components/question-verification-badge";
+import dynamic from "next/dynamic";
 import { ResolverStatusPanel } from "@/components/resolver-status-panel";
+
+const LifecycleTimeline = dynamic(
+  () => import("@/components/market/lifecycle-timeline").then((m) => m.LifecycleTimeline),
+  { ssr: false, loading: () => <p className="text-xs text-on-surface-variant">Loading timeline…</p> },
+);
 import { getMarketByOnChainId, getResolution } from "@/lib/api/markets";
 import { ApiError } from "@/lib/api/client";
 import { parseRecordId, parseU64 } from "@/lib/validation/ids";
@@ -125,13 +131,20 @@ function MarketQuickViewContent() {
   const initialFocusRef = (onChainMarketId !== null && isOpen) ? amountInputRef : yesButtonRef;
 
   const title = market?.question ?? `Market #${onChainMarketId} · ${view?.market.meta_uri ?? ""}`;
+  const fromChain = Boolean(view?.market);
   const questionIntegrity = useMarketQuestionIntegrity({
     marketId,
     onChainMarketId,
     displayedQuestion: title,
-    metaUri: view?.market.meta_uri ?? market?.metaUri,
-    questionHash: view?.market.question_hash ?? market?.questionHash,
+    metaUri: view?.market.meta_uri ?? null,
+    questionHash: view?.market.question_hash ?? null,
+    hasChainRead: fromChain,
+    chainMarket: view?.market,
   });
+
+  const displayTitle = questionIntegrity.data?.status === "verified" && questionIntegrity.data.committedQuestion
+    ? questionIntegrity.data.committedQuestion
+    : title;
 
   const isLoading = backendById.isLoading || (backendByChainId.isLoading && !marketId) || (chain.isLoading && !market);
   const notFound = !market && !view;
@@ -187,7 +200,7 @@ function MarketQuickViewContent() {
   return (
     <main className="relative min-h-[calc(100vh-64px)] overflow-hidden bg-surface">
       {/* Background decoration for terminal feel */}
-      <div className="fixed bottom-4 left-4 font-data-mono text-[10px] text-outline opacity-50 z-0 pointer-events-none">
+      <div className="fixed bottom-4 start-4 font-data-mono text-[10px] text-outline opacity-50 z-0 pointer-events-none">
         STELLAR TESTNET :: MARKET {onChainMarketId !== null ? `#${onChainMarketId}` : "NOT ON-CHAIN"}
       </div>
 
@@ -251,22 +264,27 @@ function MarketQuickViewContent() {
           {/* Content Area */}
           <div className="p-6 space-y-6">
             {/* Market Question */}
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="flex items-start justify-between gap-3">
                 <DialogTitle asChild>
                   <h2 className="font-headline-sm text-headline-sm text-on-surface leading-tight">
-                    {title}
+                    <SafeText text={title} />
+                    {displayTitle}
                   </h2>
                 </DialogTitle>
                 {questionIntegrity.data && (
                   <QuestionVerificationBadge
                     status={questionIntegrity.data.status}
                     result={questionIntegrity.data}
+                    displayedText={title}
                   />
                 )}
               </div>
               {questionIntegrity.data?.status === "mismatch" && (
-                <QuestionVerificationBadge status="mismatch" result={questionIntegrity.data} />
+                <QuestionVerificationBadge status="mismatch" result={questionIntegrity.data} displayedText={title} />
+              )}
+              {questionIntegrity.data && (
+                <VerifiedQuestionViewer check={questionIntegrity.data} />
               )}
             </div>
 
@@ -358,11 +376,16 @@ function MarketQuickViewContent() {
 
             {/* Resolution Status & Commitment Panel */}
             <ResolverStatusPanel
+              onChainMarketId={onChainMarketId}
               resolverState={resolutionQuery.data?.resolverState ?? "Unconfigured"}
               marketStatus={statusLabel}
               resolutionHash={view?.market.resolution_hash ?? market?.resolutionHash ?? resolutionQuery.data?.resolutionHash}
               resolutionSpec={market?.resolutionSpec ?? resolutionQuery.data?.resolutionSpec}
             />
+
+            {onChainMarketId !== null && (
+              <LifecycleTimeline onChainMarketId={onChainMarketId} />
+            )}
 
             {/* AI Reasoning Snippet */}
             <div className="bg-[#f0f9fa] border border-primary-container/20 p-4 rounded-lg space-y-2 relative overflow-hidden">
@@ -390,7 +413,7 @@ function MarketQuickViewContent() {
                   </Link>
                 )}
               </div>
-              <div className="absolute right-0 bottom-0 opacity-5 translate-x-4 translate-y-4">
+              <div className="absolute end-0 bottom-0 opacity-5 translate-x-4 rtl:-translate-x-4 translate-y-4">
                 <Icon name="neurology" className="text-6xl" />
               </div>
             </div>

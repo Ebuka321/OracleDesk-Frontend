@@ -17,3 +17,29 @@ test("reads build id, static routes and every chunk", () => {
     "/_next/static/css/a.css",
   ]);
 });
+
+test("records SHA-256 digest and byte size for every precached file", () => {
+  const m = buildManifest(fixture);
+  assert.ok(m.files, "manifest.files must be defined");
+  for (const asset of m.assets) {
+    const entry = m.files[asset];
+    assert.ok(entry, `Entry missing for asset: ${asset}`);
+    assert.equal(typeof entry.digest, "string", `Digest missing for: ${asset}`);
+    assert.equal(entry.digest.length, 64, `Digest must be 64-character hex for: ${asset}`);
+    assert.equal(typeof entry.size, "number", `Size missing for: ${asset}`);
+    assert.ok(entry.size > 0, `Size must be positive for: ${asset}`);
+  }
+});
+
+test("fails if NEXT_PUBLIC_BUILD_ID disagrees with .next/BUILD_ID", () => {
+  const original = process.env.NEXT_PUBLIC_BUILD_ID;
+  try {
+    process.env.NEXT_PUBLIC_BUILD_ID = "different-build-id";
+    assert.throws(
+      () => buildManifest(fixture),
+      /Build ID disagreement/
+    );
+  } finally {
+    process.env.NEXT_PUBLIC_BUILD_ID = original;
+  }
+});

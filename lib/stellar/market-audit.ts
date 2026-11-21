@@ -5,6 +5,7 @@ import { bytesToHex, read } from "./typed-call";
 import { fetchAndVerifyTraceWith, normalizeHash } from "./trace";
 import type { TraceCheck } from "./trace-core";
 import { IPFS_GATEWAYS, DEFAULT_IPFS_MAX_TRACE_BYTES } from "./config";
+import { ConcurrencyLimiter } from "@/lib/charts/trace-overlay-cache";
 
 export interface OnChainMarketTrace {
   index: number;
@@ -67,47 +68,73 @@ export interface AuditProgress {
 }
 
 export const DEFAULT_AUDIT_CONCURRENCY = 3;
+export const MAX_MARKET_TRACE_ENUMERATION = 200;
+
+export interface EnumerateTracesOptions {
+  concurrency?: number;
+  /** Maximum traces to fetch (paginates newest-first when count exceeds limit). Defaults to 200. */
+  limit?: number;
+  /** Optional starting index (0-based). */
+  offset?: number;
+  signal?: AbortSignal;
+}
 
 /**
- * Enumerates all traces registered for a market directly from reasoning-registry contract
+ * Enumerates traces registered for a market directly from reasoning-registry contract
  * in publish order, independent of the backend.
+ *
+ * Uses bounded-concurrency parallel RPC reads via `ConcurrencyLimiter` and caps
+ * enumeration to `limit` (default 200) so markets with hundreds of traces stay
+ * fast and cancellable via `AbortSignal`.
  */
 export async function enumerateOnChainMarketTraces(
   onChainMarketId: bigint | string | number,
   client = reasoningRegistry(),
+  opts: EnumerateTracesOptions = {},
 ): Promise<OnChainMarketTrace[]> {
+  if (opts.signal?.aborted) return [];
   const marketIdBigInt = BigInt(onChainMarketId);
 
   // 1. Get count from reasoning-registry
   const countTx = await client.market_trace_count({ market_id: marketIdBigInt });
   const countU64 = read(countTx, "reasoningRegistry");
   const count = Number(countU64);
+  if (count <= 0) return [];
 
-  const traces: OnChainMarketTrace[] = [];
+  const limit = opts.limit ?? MAX_MARKET_TRACE_ENUMERATION;
+  const start = opts.offset !== undefined ? Math.max(0, opts.offset) : Math.max(0, count - limit);
+  const end = Math.min(count, start + limit);
 
-  // 2. Enumerate in publish order
-  for (let index = 0; index < count; index++) {
-    const traceAtTx = await client.market_trace_at({
-      market_id: marketIdBigInt,
-      index: BigInt(index),
-    });
-    const traceId = read(traceAtTx, "reasoningRegistry");
+  const limiter = new ConcurrencyLimiter(opts.concurrency ?? DEFAULT_AUDIT_CONCURRENCY);
+  const indices: number[] = [];
+  for (let i = start; i < end; i++) indices.push(i);
 
-    const getTraceTx = await client.get_trace({ trace_id: traceId });
-    const trace = read(getTraceTx, "reasoningRegistry");
+  const results = await Promise.all(
+    indices.map((index) =>
+      limiter.run(async () => {
+        const traceAtTx = await client.market_trace_at({
+          market_id: marketIdBigInt,
+          index: BigInt(index),
+        });
+        const traceId = read(traceAtTx, "reasoningRegistry");
 
-    traces.push({
-      index,
-      onChainTraceId: traceId.toString(),
-      agent: trace.agent,
-      action: trace.action,
-      ipfsCid: trace.ipfs_cid,
-      publishedAt: Number(trace.published_at) * 1000,
-      traceHash: bytesToHex(trace.trace_hash),
-    });
-  }
+        const getTraceTx = await client.get_trace({ trace_id: traceId });
+        const trace = read(getTraceTx, "reasoningRegistry");
 
-  return traces;
+        return {
+          index,
+          onChainTraceId: traceId.toString(),
+          agent: trace.agent,
+          action: trace.action,
+          ipfsCid: trace.ipfs_cid,
+          publishedAt: Number(trace.published_at) * 1000,
+          traceHash: bytesToHex(trace.trace_hash),
+        } satisfies OnChainMarketTrace;
+      }, opts.signal),
+    ),
+  );
+
+  return results.sort((a, b) => a.index - b.index);
 }
 
 /**

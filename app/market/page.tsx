@@ -9,6 +9,10 @@ import PriceChart from "@/components/charts/price-chart";
 import { usePriceHistory } from "@/lib/hooks/usePriceHistory";
 import { DepthChart } from "@/components/charts/depth-chart";
 import { DemoBadge } from "@/components/ui/demo-badge";
+import { SafeText } from "@/components/safe-text";
+// Issue #231: lazy-load committee panel for markets using ResolutionSpec::Committee
+import dynamic from "next/dynamic";
+const CommitteePanel = dynamic(() => import("@/components/market/committee-panel").then((m) => ({ default: m.CommitteePanel })), { ssr: false, loading: () => null });
 
 const MarketHeader = () => {
   return (
@@ -19,9 +23,11 @@ const MarketHeader = () => {
             <span className="px-2 py-0.5 bg-primary-container text-on-primary-container font-label-caps text-[10px] rounded">POLITICS</span>
             <span className="text-on-surface-variant font-data-mono text-label-caps">#MKT-9204</span>
           </div>
-          <h1 className="font-display-lg text-display-lg text-on-background max-w-3xl">Will the US Federal Reserve lower rates by 50bps in Q4?</h1>
+          <h1 className="font-display-lg text-display-lg text-on-background max-w-3xl">
+            <SafeText text="Will the US Federal Reserve lower rates by 50bps in Q4?" />
+          </h1>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-8 border-l border-outline-variant pl-8">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-8 border-s border-outline-variant ps-8">
           <div>
             <p className="font-label-caps text-label-caps text-on-surface-variant mb-1">PROBABILITY</p>
             <p className="font-headline-md text-headline-md text-secondary">64.2%</p>
@@ -69,7 +75,7 @@ const MarketPriceSection = () => {
   const searchParams = useSearchParams();
   const onChainId = searchParams.get("onChainId");
   const { points } = usePriceHistory(onChainId);
-  return <PriceChart points={points} />;
+  return <PriceChart points={points} onChainMarketId={onChainId} />;
 };
 
 const MarketPriceSkeleton = () => (
@@ -106,8 +112,8 @@ const AIConfidenceInterval = () => {
       <h3 className="font-label-caps text-label-caps text-on-surface-variant mb-6 uppercase tracking-widest">AI Confidence Interval</h3>
       <div className="relative py-4">
         <div className="h-1 bg-outline-variant w-full rounded-full"></div>
-        <div className="absolute top-1/2 -translate-y-1/2 left-[58%] right-[32%] h-3 bg-primary-container/40 rounded-full border-x-2 border-primary"></div>
-        <div className="absolute top-1/2 -translate-y-1/2 left-[64%] w-4 h-4 bg-primary rounded-full border-2 border-white shadow-sm"></div>
+        <div className="absolute top-1/2 -translate-y-1/2 start-[58%] end-[32%] h-3 bg-primary-container/40 rounded-full border-x-2 border-primary"></div>
+        <div className="absolute top-1/2 -translate-y-1/2 start-[64%] w-4 h-4 bg-primary rounded-full border-2 border-white shadow-sm"></div>
       </div>
       <div className="flex justify-between mt-4">
         <div className="text-center">
@@ -143,14 +149,14 @@ const RecentActivity = () => {
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-left font-data-mono text-body-md">
+        <table className="w-full text-start font-data-mono text-body-md">
           <thead>
             <tr className="border-b border-outline-variant bg-surface-container-low">
               <th className="px-6 py-3 font-label-caps text-on-surface-variant">SIDE</th>
               <th className="px-6 py-3 font-label-caps text-on-surface-variant">PRICE</th>
               <th className="px-6 py-3 font-label-caps text-on-surface-variant">SHARES</th>
               <th className="px-6 py-3 font-label-caps text-on-surface-variant">TOTAL</th>
-              <th className="px-6 py-3 font-label-caps text-on-surface-variant text-right">TIME</th>
+              <th className="px-6 py-3 font-label-caps text-on-surface-variant text-end">TIME</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-outline-variant">
@@ -160,7 +166,7 @@ const RecentActivity = () => {
                 <td className="px-6 py-4">{activity.price}</td>
                 <td className="px-6 py-4">{activity.shares}</td>
                 <td className="px-6 py-4 font-bold text-on-surface">{activity.total}</td>
-                <td className="px-6 py-4 text-right text-on-surface-variant">{activity.time}</td>
+                <td className="px-6 py-4 text-end text-on-surface-variant">{activity.time}</td>
               </tr>
             ))}
           </tbody>
@@ -192,7 +198,7 @@ const TradeExecution = () => {
                 value={amount}
                 onChange={(e) => setAmount(Number(e.target.value))}
               />
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant font-bold cursor-pointer">MAX</span>
+              <span className="absolute end-4 top-1/2 -translate-y-1/2 text-on-surface-variant font-bold cursor-pointer">MAX</span>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -275,25 +281,25 @@ const OracleInsights = () => {
         <h3 className="font-headline-sm text-headline-sm text-primary">Oracle Insights</h3>
       </div>
       <div className="p-6 space-y-8 relative">
-        <div className="absolute left-[33px] top-8 bottom-8 w-[2px] bg-primary/10"></div>
-        <div className="relative pl-10">
-          <div className="absolute left-0 top-1 w-4 h-4 rounded-full bg-primary border-4 border-[#f0f9fa] z-10"></div>
+        <div className="absolute start-[33px] top-8 bottom-8 w-[2px] bg-primary/10"></div>
+        <div className="relative ps-10">
+          <div className="absolute start-0 top-1 w-4 h-4 rounded-full bg-primary border-4 border-[#f0f9fa] z-10"></div>
           <p className="font-label-caps text-[10px] text-primary/70 mb-1">RECENT • 2H AGO</p>
           <h4 className="font-body-lg font-bold text-on-background mb-2">Hawkish Sentiment Surge</h4>
           <p className="text-on-surface-variant leading-relaxed">
             Natural language processing of latest FOMC minutes indicates a 12% shift toward hawkish positioning. Market is underpricing persistent inflation data.
           </p>
         </div>
-        <div className="relative pl-10">
-          <div className="absolute left-0 top-1 w-4 h-4 rounded-full bg-outline-variant border-4 border-[#f0f9fa] z-10"></div>
+        <div className="relative ps-10">
+          <div className="absolute start-0 top-1 w-4 h-4 rounded-full bg-outline-variant border-4 border-[#f0f9fa] z-10"></div>
           <p className="font-label-caps text-[10px] text-on-surface-variant mb-1">STABLE • 1D AGO</p>
           <h4 className="font-body-lg font-bold text-on-background mb-2">Whale Accumulation</h4>
           <p className="text-on-surface-variant leading-relaxed">
             Three institutional-grade wallets have entered large &apos;YES&apos; positions totaling $1.2M. Historically, this signature precedes a 5% price appreciation.
           </p>
         </div>
-        <div className="relative pl-10">
-          <div className="absolute left-0 top-1 w-4 h-4 rounded-full bg-outline-variant border-4 border-[#f0f9fa] z-10"></div>
+        <div className="relative ps-10">
+          <div className="absolute start-0 top-1 w-4 h-4 rounded-full bg-outline-variant border-4 border-[#f0f9fa] z-10"></div>
           <p className="font-label-caps text-[10px] text-on-surface-variant mb-1">LEGACY • 3D AGO</p>
           <h4 className="font-body-lg font-bold text-on-background mb-2">Initial Market Seeding</h4>
           <p className="text-on-surface-variant leading-relaxed">

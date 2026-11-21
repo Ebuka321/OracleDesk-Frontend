@@ -10,8 +10,29 @@ permissions:
   contents: read
 
 jobs:
+  install:
+    name: Install dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - id: nm-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci --legacy-peer-deps
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+
   frontend:
     name: Typecheck, lint, test, build
+    needs: install
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -24,7 +45,13 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      - run: npm ci --legacy-peer-deps
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Verify CI claims match docs
+        run: npm run check:ci-claims
 
       - name: Install the reviewed lifecycle scripts only
         run: node scripts/run-allowed-install-scripts.mjs
@@ -49,7 +76,9 @@ jobs:
 
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm run check:docs
       - run: npm test
+      - run: npm run test:scripts
       - run: npm run build
         env:
           # Production builds require an explicit API URL (no remote fallback).
@@ -72,8 +101,50 @@ jobs:
       - name: No production links to retired demo routes
         run: node scripts/check-demo-links.mjs
 
+  x402-contract:
+    name: x402 contract tests (no egress)
+    needs: install
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - id: x402cache
+        uses: actions/cache@v4
+        with:
+          path: contracts/oracledesk-stellar/x402/node_modules
+          key: x402-node22-${{ runner.os }}-${{ hashFiles('contracts/oracledesk-stellar/x402/package-lock.json') }}
+
+      - run: npm ci --ignore-scripts --prefix contracts/oracledesk-stellar/x402
+        if: steps.x402cache.outputs.cache-hit != 'true'
+
+      - run: npm run check:x402
+      - run: npx tsc -p e2e/x402
+
+      - name: Offline contract tests (no egress)
+        run: sudo unshare --net -- sh -c 'ip link set lo up && su "$USER" -c "npm run e2e:x402 -- --reporter=junit --outputFile=x402-junit.xml"'
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: x402-junit
+          path: x402-junit.xml
+
   secrets-canary:
     name: Secret scanner canary
+    needs: install
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -83,7 +154,10 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci --legacy-peer-deps
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - name: Build with a synthetic secret seed and prove the scan fails
         env:
           NEXT_PUBLIC_API_URL: https://oracledesk-backend.onrender.com/api/v1
@@ -98,6 +172,7 @@ jobs:
 
   perf:
     name: Lighthouse CI & Performance Budgets
+    needs: install
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -109,7 +184,10 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      - run: npm ci --legacy-peer-deps
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Build production bundle
         run: npm run build

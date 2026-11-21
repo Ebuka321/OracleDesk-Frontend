@@ -11,7 +11,8 @@ import { decodeEvent, eventTopicFilter, fetchEventRange, type ChainEvent } from 
 import type { Position } from "@/lib/stellar/generated/market-core";
 import type { Stamped } from "@/lib/stellar/optimistic";
 import { useRealtimeBatch } from "@/lib/realtime/RealtimeProvider";
-import { classifyTrade, classifyTrace, classifyResolved, classifyRedeemed, classifyTracked } from "./classify";
+import { classifyTrade, classifyTrace, classifyResolved, classifyRedeemed, classifyTracked, classifyDeadline } from "./classify";
+import { ledgerClock } from "@/lib/stellar/ledger-clock";
 import { openInbox, type Inbox, type InboxItem } from "./store";
 
 interface InboxView {
@@ -90,6 +91,20 @@ function ConnectedInbox({ owner, children }: { owner: string; children: ReactNod
     });
   });
 
+  usePrivateRealtimeEvents((event, eventOwner) => {
+    if (eventOwner !== owner) return;
+    if (event.type === "PASS_EXPIRING") {
+      const item = classifyPassExpiring(event.payload, owner, event.receivedAt);
+      if (item) {
+        void enqueue(async inbox => {
+          await inbox.put([item]);
+          await inbox.prune(500);
+          await refresh(inbox);
+        });
+      }
+    }
+  });
+
   const recordTransactions = useEffectEvent(() => {
     const own = tracker.list.filter(tx => tx.holder === owner && tx.networkPassphrase === NETWORK_PASSPHRASE);
     void enqueue(async inbox => {
@@ -133,6 +148,11 @@ function ConnectedInbox({ owner, children }: { owner: string; children: ReactNod
               const item = classifyResolved({ id: `status:${id}`, name: "MarketResolved", ledger: marketTx.simulation!.latestLedger,
                 closedAt: new Date().toISOString(), txHash: "", data: { market_id: BigInt(id), outcome: market.status.tag === "Void" ? undefined : market.status.values[0] } }, owner, position);
               if (item) synthetic.push(item);
+            } else if (market.status.tag === "Open") {
+              const nowSec = ledgerClock.now() ?? ledgerClock.estimateNow().time;
+              const unc = BigInt(Math.ceil(ledgerClock.uncertainty()));
+              const dlItem = classifyDeadline(id, BigInt(market.close_time), BigInt(Math.floor(nowSec)), owner, position, unc);
+              if (dlItem) synthetic.push(dlItem);
             }
           } else held.current.delete(id);
         }

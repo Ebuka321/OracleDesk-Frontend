@@ -16,6 +16,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
 
 const PRECACHE_EXT = /\.(js|css|woff2?|ttf|png|svg|jpg|jpeg|webp|ico)$/;
 
@@ -31,18 +32,50 @@ function walk(dir) {
 export function buildManifest(nextDir) {
   const buildId = readFileSync(join(nextDir, "BUILD_ID"), "utf8").trim();
   if (!/^[A-Za-z0-9_-]+$/.test(buildId)) throw new Error(`Unexpected BUILD_ID: ${buildId}`);
+
+  // Build-time assertion: if process.env.NEXT_PUBLIC_BUILD_ID is set, it must agree with BUILD_ID
+  const envBuildId = process.env.NEXT_PUBLIC_BUILD_ID?.trim();
+  if (envBuildId && envBuildId !== buildId) {
+    throw new Error(
+      `Build ID disagreement: NEXT_PUBLIC_BUILD_ID ("${envBuildId}") does not match .next/BUILD_ID ("${buildId}")`
+    );
+  }
+
   const prerender = JSON.parse(readFileSync(join(nextDir, "prerender-manifest.json"), "utf8"));
   const routes = Object.keys(prerender.routes ?? {})
     .filter((r) => r.startsWith("/") && !r.startsWith("/_") && !/\.[a-z0-9]+$/i.test(r) && !r.includes("["))
     .sort();
   if (!routes.includes("/offline")) throw new Error("app/offline must be prerendered for the offline fallback.");
   const staticDir = join(nextDir, "static");
-  const assets = walk(staticDir)
+  const assetPaths = walk(staticDir)
     .map((f) => relative(staticDir, f).split(sep).join("/"))
     .filter((p) => !p.startsWith("sw/") && PRECACHE_EXT.test(p))
-    .map((p) => `/_next/static/${p}`)
     .sort();
-  return { buildId, routes, assets };
+
+  const assets = assetPaths.map((p) => `/_next/static/${p}`);
+
+  const files = {};
+  for (const p of assetPaths) {
+    const fullPath = join(staticDir, p);
+    const buf = readFileSync(fullPath);
+    const hash = createHash("sha256").update(buf).digest("hex");
+    const assetUrl = `/_next/static/${p}`;
+    files[assetUrl] = {
+      digest: hash,
+      size: buf.length,
+    };
+  }
+
+  // Record route verification strategy: App Router HTML includes per-request
+  // dynamic headers and nonces, so routes are verified by 200 status and text/html content-type.
+  for (const r of routes) {
+    files[r] = {
+      verify: "status-and-type",
+      type: "text/html",
+    };
+  }
+
+  return { buildId, routes, assets, files };
 }
 
 export function writeManifest(nextDir) {
@@ -50,7 +83,10 @@ export function writeManifest(nextDir) {
   const outDir = join(nextDir, "static", "sw");
   mkdirSync(outDir, { recursive: true });
   const out = join(outDir, `precache-${manifest.buildId}.json`);
-  writeFileSync(out, JSON.stringify(manifest));
+  const raw = JSON.stringify(manifest, null, 2);
+  const manifestDigest = createHash("sha256").update(raw).digest("hex");
+  manifest.manifestDigest = manifestDigest;
+  writeFileSync(out, JSON.stringify(manifest, null, 2));
   return { out, manifest };
 }
 

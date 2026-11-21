@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Keypair } from "@stellar/stellar-sdk";
-import { classifyTrade, classifyTrace, classifyResolved, classifyRedeemed } from "../classify";
+import { classifyTrade, classifyTrace, classifyResolved, classifyRedeemed, classifyDeadline } from "../classify";
+import { RESOLUTION_GRACE_SECS } from "@/lib/stellar/resolution-deadline";
 import { isTradeEvent, type TradeEvent } from "@/lib/realtime/types";
 import { socketTrade } from "@/lib/hooks/useMarketTrades";
 
@@ -37,5 +38,14 @@ describe("wallet-only classification", () => {
     const redeemed = { ...event, name: "Redeemed", data: { market_id: 7n, holder: owner, payout: 0n } };
     expect(classifyRedeemed(redeemed, other)).toBeNull();
     expect(classifyRedeemed(redeemed, owner)?.data.payoutRaw).toBe("0");
+  });
+  it("emits deduplicated deadline-near and deadline-passed items for held open markets", () => {
+    const closeTime = 1_000_000n;
+    const deadline = closeTime + RESOLUTION_GRACE_SECS;
+    const nearItem = classifyDeadline("7", closeTime, deadline - 100n, owner, { yes: 10n, no: 0n });
+    expect(nearItem).toMatchObject({ kind: "deadline-near", id: "deadline:deadline-near:7", marketId: "7" });
+    const passedItem = classifyDeadline("7", closeTime, deadline + 10n, owner, { yes: 10n, no: 0n });
+    expect(passedItem).toMatchObject({ kind: "deadline-passed", id: "deadline:deadline-passed:7", marketId: "7" });
+    expect(classifyDeadline("7", closeTime, deadline + 10n, owner, { yes: 0n, no: 0n })).toBeNull();
   });
 });

@@ -11,9 +11,12 @@ import { PwaRegistrar } from "@/components/pwa/pwa-registrar";
 import { DebugMount } from "@/components/debug/debug-mount";
 import { RpcDegradedBanner } from "@/components/debug/RpcPanel";
 import { NetworkConsistencyBanner } from "@/components/layout/NetworkConsistencyBanner";
+import { IntegrityBanner } from "@/components/layout/IntegrityBanner";
 import { BuildIdentityBanner } from "@/components/layout/BuildIdentityBanner";
 import { CopyTradeReconciler } from "@/components/copy-trade/CopyTradeReconciler";
 import { ViewedAddressProvider } from "@/lib/hooks/useViewedAddress";
+import { IntegrityBanner } from "@/components/layout/IntegrityBanner";
+import { ViewingBanner } from "@/components/layout/ViewingBanner";
 import { WebVitals } from "@/app/web-vitals";
 import { CommandPalette } from "@/components/command-palette/CommandPalette";
 
@@ -55,15 +58,19 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const forcedDir = process.env.NEXT_PUBLIC_FORCE_DIR;
+  const dir: Dir = forcedDir === "rtl" || forcedDir === "ltr" ? forcedDir : dirForLocale("en");
   return (
     <html
       lang="en"
+      dir={dir}
       className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col font-body-md text-on-surface">
+        <DirectionProvider dir={dir}>
         <a
           href="#main-content"
-          className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-[100] focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-primary-foreground font-label-caps"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:start-4 focus:z-[100] focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-primary-foreground font-label-caps"
         >
           Skip to main content
         </a>
@@ -78,6 +85,10 @@ export default function RootLayout({
               <HealthProvider>
                 <InboxProvider>
                   <Navbar />
+                  <div className="sticky top-0 z-50 flex flex-col">
+                    <IntegrityBanner />
+                    <ViewingBanner />
+                  </div>
                   <NetworkConsistencyBanner />
                   <RpcDegradedBanner />
                   <div id="main-content" tabIndex={-1} className="flex-1 flex flex-col outline-none">
@@ -93,6 +104,7 @@ export default function RootLayout({
           </ViewedAddressProvider>
         </WalletProvider>
         </PwaRegistrar>
+        </DirectionProvider>
       </body>
     </html>
   );

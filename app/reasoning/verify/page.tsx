@@ -439,22 +439,22 @@ function VerifyTraceContent() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs font-data-mono text-on-surface">
                       <thead>
-                        <tr className="text-left text-on-surface-variant">
-                          <th className="pr-3 pb-1 font-normal">Gateway</th>
-                          <th className="pr-3 pb-1 font-normal">Outcome</th>
-                          <th className="pr-3 pb-1 font-normal">Time</th>
+                        <tr className="text-start text-on-surface-variant">
+                          <th className="pe-3 pb-1 font-normal">Gateway</th>
+                          <th className="pe-3 pb-1 font-normal">Outcome</th>
+                          <th className="pe-3 pb-1 font-normal">Time</th>
                           <th className="pb-1 font-normal">Bytes</th>
                         </tr>
                       </thead>
                       <tbody>
                         {verificationResult.attempts.map((attempt, i) => (
                           <tr key={`${attempt.gateway}-${i}`}>
-                            <td className="pr-3 py-1">{hostOf(attempt.gateway)}</td>
-                            <td className="pr-3 py-1">
+                            <td className="pe-3 py-1">{hostOf(attempt.gateway)}</td>
+                            <td className="pe-3 py-1">
                               {GATEWAY_OUTCOME_LABEL[attempt.outcome]}
                               {attempt.status ? ` (${attempt.status})` : ""}
                             </td>
-                            <td className="pr-3 py-1">{attempt.outcome === "skipped" ? "—" : `${attempt.ms} ms`}</td>
+                            <td className="pe-3 py-1">{attempt.outcome === "skipped" ? "—" : `${attempt.ms} ms`}</td>
                             <td className="py-1">{attempt.bytes !== undefined ? formatBytes(attempt.bytes) : "—"}</td>
                           </tr>
                         ))}

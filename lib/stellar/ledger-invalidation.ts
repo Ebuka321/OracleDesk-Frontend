@@ -4,6 +4,7 @@ import { CONTRACTS } from "./config";
 import { decodeMarketCoreEvent, type DecodedEvent } from "./events";
 import { rpcServer } from "./clients";
 import { ledgerClock, type LedgerInfo } from "./ledger-clock";
+import { marketPriceStore, type MarketPriceStore } from "@/lib/realtime/market-price-store";
 
 export interface InvalidatorOptions {
   queryClient: QueryClient;
@@ -11,6 +12,7 @@ export interface InvalidatorOptions {
   server?: Pick<rpc.Server, "getEvents">;
   marketCoreId?: string;
   usdcId?: string;
+  priceStore?: MarketPriceStore;
 }
 
 export interface InvalidationSummary {
@@ -22,7 +24,9 @@ export interface InvalidationSummary {
 export class LedgerInvalidator {
   private lastSeenLedger: number | null = null;
   private unsubscribeClock: (() => void) | null = null;
+  private unsubscribeStall: (() => void) | null = null;
   private isProcessing = false;
+  private deferredKeys = new Map<string, (readonly unknown[])[]>();
 
   constructor(private readonly opts: InvalidatorOptions) {}
 
@@ -36,6 +40,12 @@ export class LedgerInvalidator {
 
   start(): () => void {
     if (this.unsubscribeClock) return this.unsubscribeClock;
+    const store = this.opts.priceStore ?? marketPriceStore;
+    this.unsubscribeStall = store.subscribeStall((marketId, isHealthy) => {
+      if (!isHealthy) {
+        this.flushDeferred(marketId);
+      }
+    });
     this.unsubscribeClock = ledgerClock.subscribe((ledger) => {
       if (ledger) {
         void this.handleNewLedger(ledger.sequence);
@@ -49,6 +59,23 @@ export class LedgerInvalidator {
       this.unsubscribeClock();
       this.unsubscribeClock = null;
     }
+    if (this.unsubscribeStall) {
+      this.unsubscribeStall();
+      this.unsubscribeStall = null;
+    }
+    this.deferredKeys.clear();
+  }
+
+  flushDeferred(marketId: string): (readonly unknown[])[] {
+    const keys = this.deferredKeys.get(marketId);
+    if (!keys || keys.length === 0) return [];
+    this.deferredKeys.delete(marketId);
+    const store = this.opts.priceStore ?? marketPriceStore;
+    store.resetDeferral(marketId);
+    for (const key of keys) {
+      this.opts.queryClient.invalidateQueries({ queryKey: key });
+    }
+    return keys;
   }
 
   async handleNewLedger(currentLedger: number): Promise<InvalidationSummary> {
@@ -155,9 +182,20 @@ export class LedgerInvalidator {
           switch (decoded.kind) {
             case "Trade": {
               const id = decoded.marketId.toString();
-              recordKey(["onChainMarket", id]);
-              recordKey(["stellar", "market", id]);
-              recordKey(["market", id]);
+              const store = this.opts.priceStore ?? marketPriceStore;
+              if (store.shouldDeferInvalidation(id)) {
+                // Stream is healthy for this market and within bounds: defer per-market invalidation
+                this.deferredKeys.set(id, [
+                  ["onChainMarket", id],
+                  ["stellar", "market", id],
+                  ["market", id],
+                ]);
+              } else {
+                this.flushDeferred(id);
+                recordKey(["onChainMarket", id]);
+                recordKey(["stellar", "market", id]);
+                recordKey(["market", id]);
+              }
               recordKey(["markets"]);
               recordKey(["stellar", "markets"]);
               break;

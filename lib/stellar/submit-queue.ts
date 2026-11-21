@@ -4,8 +4,15 @@ import { useSyncExternalStore } from "react";
 import { classifySequenceError } from "./errors";
 
 const LOCK_PREFIX = "oracledesk-submit:";
-const LEASE_MS = 10_000;
-const HEARTBEAT_MS = 2_000;
+export const LEASE_MS = 10_000;
+export const HEARTBEAT_MS = 2_000;
+/**
+ * Settle delay before confirming ownership of a localStorage lease.
+ * Reduces the write-then-read race window when Web Locks are unavailable.
+ * Note: without Web Locks, no pure localStorage protocol can guarantee strict
+ * mutual exclusion if a tab freezes longer than LEASE_SETTLE_MS.
+ */
+export const LEASE_SETTLE_MS = 50;
 
 export interface QueueRunContext {
   attempt: 0 | 1;
@@ -44,6 +51,7 @@ interface QueuedJob<T = unknown> {
 
 interface LeaseRecord {
   owner: string;
+  token: string;
   expiresAt: number;
 }
 
@@ -108,8 +116,11 @@ async function withBrowserLock<T>(
 
 /**
  * Best-effort fallback for browsers without Web Locks. localStorage provides
- * the lease, while BroadcastChannel lets other tabs observe its heartbeat.
+ * the lease with a unique per-attempt token and a settle-delay re-read check
+ * to reduce the write-then-read race window, while BroadcastChannel lets other
+ * tabs observe release/heartbeat events.
  */
+let leaseSeq = 0;
 async function withLease<T>(
   address: string,
   signal: AbortSignal,
@@ -119,6 +130,7 @@ async function withLease<T>(
   if (typeof localStorage === "undefined") return run();
 
   const tabId = getTabId();
+  const token = `${tabId}:${++leaseSeq}:${Math.random().toString(36).slice(2)}`;
   const key = `${LOCK_PREFIX}${address}`;
   const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("oracledesk-submit");
   const readLease = (): LeaseRecord | null => {
@@ -130,10 +142,13 @@ async function withLease<T>(
     }
   };
   const writeLease = () => {
-    const lease = { owner: tabId, expiresAt: Date.now() + LEASE_MS };
+    const lease: LeaseRecord = { owner: tabId, token, expiresAt: Date.now() + LEASE_MS };
     localStorage.setItem(key, JSON.stringify(lease));
-    channel?.postMessage({ address, ...lease });
-    return readLease()?.owner === tabId;
+    channel?.postMessage({ type: "lease", address, ...lease });
+  };
+  const ownsLease = () => {
+    const current = readLease();
+    return Boolean(current && current.token === token && current.expiresAt > Date.now());
   };
 
   try {
@@ -141,7 +156,10 @@ async function withLease<T>(
     while (!signal.aborted) {
       const current = readLease();
       if (!current || current.expiresAt <= Date.now()) {
-        if (writeLease()) break;
+        writeLease();
+        // Settle window: allow concurrent writers to overwrite before confirming ownership.
+        await sleep(LEASE_SETTLE_MS, signal);
+        if (ownsLease()) break;
       }
       await sleep(200, signal);
     }
@@ -149,14 +167,14 @@ async function withLease<T>(
     onWaiting(false);
 
     const heartbeat = setInterval(() => {
-      if (readLease()?.owner === tabId) writeLease();
+      if (ownsLease()) writeLease();
     }, HEARTBEAT_MS);
     try {
       return await run();
     } finally {
       clearInterval(heartbeat);
-      if (readLease()?.owner === tabId) localStorage.removeItem(key);
-      channel?.postMessage({ address, owner: tabId, expiresAt: 0 });
+      if (readLease()?.token === token) localStorage.removeItem(key);
+      channel?.postMessage({ type: "release", address, owner: tabId, token, expiresAt: 0 });
     }
   } finally {
     channel?.close();

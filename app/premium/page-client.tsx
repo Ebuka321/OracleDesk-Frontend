@@ -21,7 +21,7 @@ import { LiveRegion } from "@/components/ui/live-region";
 
 import { useWallet } from "@/lib/contexts/WalletContext";
 import { useUsdcTransfer, useAccountReserve, usePrepareUsdcTransfer, useAccountAuth, usePrepareMultisig } from "@/lib/hooks/useStellar";
-import { DAILY_PASS_PRICE_RAW, PAYMENTS_RECIPIENT, NETWORK_LABEL, NETWORK_PASSPHRASE, explorerTx } from "@/lib/stellar/config";
+import { CONTRACTS, DAILY_PASS_PRICE_RAW, IDENTITIES, PAYMENTS_RECIPIENT, NETWORK_LABEL, NETWORK_PASSPHRASE, explorerTx } from "@/lib/stellar/config";
 import { formatUsdc } from "@/lib/stellar/units";
 import { TxPhase } from "@/lib/stellar/tx-lifecycle";
 import { isMultisigAccount, type MultisigSession } from "@/lib/stellar/multisig";
@@ -31,6 +31,8 @@ import { isUnfinishedPayment, listPending, removePending, savePending, type Pend
 import { verifyPendingPayment, type VerifyResult } from "@/lib/payments/verify";
 import { DAILY_PASS_TRACE_PLACEHOLDER } from "@/lib/api/traces";
 import { userMessage } from "@/lib/errors/display";
+import { setSpanAttribute, withOperation } from "@/lib/observability/tracing";
+import { track } from "@/lib/observability/analytics";
 
 function renderTxPhase(phase: TxPhase): string | null {
   switch (phase.name) {
@@ -246,6 +248,7 @@ export default function PremiumPageClient() {
 
   const handlePayment = async () => {
     if (!selectedTier?.priceRaw || !address) return;
+    const priceRaw = selectedTier.priceRaw;
 
     if (paymentMethod === "card") {
       setStatusMessage("Card payments aren't available. Pay with USDC instead.");
@@ -260,7 +263,7 @@ export default function PremiumPageClient() {
       return;
     }
 
-    await withOperation("premium-unlock", async (opCtx) => {
+    await withOperation("premium-unlock", async () => {
       setIsSubmitting(true);
       track("premium_payment_started", {});
       let txHash: string | null = null;
@@ -272,32 +275,27 @@ export default function PremiumPageClient() {
         }
 
         setStatusMessage(null);
+        // Issue #228: gate on durable storage before moving funds
+        const { assertDurableStorage } = await import("@/lib/storage/quota");
+        await assertDurableStorage("daily-pass");
         const sent = await transfer.mutateAsync({
           to: PAYMENTS_RECIPIENT,
-          amount: selectedTier.priceRaw,
+          amount: priceRaw,
           prepared: prepareTransfer.data,
           review: reviewPreparedTransfer,
           followUp: {
             type: "unlock-daily-pass",
             traceId: DAILY_PASS_TRACE_PLACEHOLDER,
-            amountRaw: selectedTier.priceRaw.toString(),
+            amountRaw: priceRaw.toString(),
           },
         });
         txHash = sent.txHash.toLowerCase();
         setSpanAttribute("payment.tx_hash", txHash);
 
-        const payment: PendingPayment = {
-          txHash,
-          kind: "DAILY_PASS",
-          amountRaw: selectedTier.priceRaw.toString(),
-        },
-      });
-      txHash = sent.txHash.toLowerCase();
-
       const payment: PendingPayment = {
         txHash,
         kind: "DAILY_PASS",
-        amountRaw: selectedTier.priceRaw.toString(),
+        amountRaw: priceRaw.toString(),
         from: sent.holder,
         recipient: PAYMENTS_RECIPIENT,
         networkPassphrase: NETWORK_PASSPHRASE,
@@ -326,6 +324,7 @@ export default function PremiumPageClient() {
     } finally {
       setIsSubmitting(false);
     }
+    });
   };
 
   return (
@@ -372,7 +371,7 @@ export default function PremiumPageClient() {
               }`}
             >
               {tier.featured && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-on-primary px-3 py-1 rounded-full font-label-caps text-label-caps text-[10px]">
+                <div className="absolute -top-3 start-1/2 -translate-x-1/2 bg-primary text-on-primary px-3 py-1 rounded-full font-label-caps text-label-caps text-[10px]">
                   MOST POPULAR
                 </div>
               )}
@@ -423,7 +422,7 @@ export default function PremiumPageClient() {
         <div className="mb-24">
           <h2 className="font-headline-md text-headline-md mb-8 text-center">Feature Breakdown</h2>
           <div className="overflow-x-auto border border-outline-variant rounded-xl bg-white shadow-sm">
-            <table className="w-full text-left border-collapse min-w-[600px]">
+            <table className="w-full text-start border-collapse min-w-[600px]">
               <thead>
                 <tr className="bg-surface-container-low border-b border-outline-variant">
                   <th className="p-4 font-label-caps text-label-caps">Features</th>
@@ -554,7 +553,7 @@ export default function PremiumPageClient() {
                 }`}
                 onClick={() => setPaymentMethod('usdc')}
               >
-                <div className="w-10 h-10 bg-surface rounded-full flex items-center justify-center mr-4 border border-outline-variant overflow-hidden p-2">
+                <div className="w-10 h-10 bg-surface rounded-full flex items-center justify-center me-4 border border-outline-variant overflow-hidden p-2">
                   <Image
                     alt="USDC"
                     width={40}

@@ -111,6 +111,23 @@ describe("RpcPool", () => {
     expect(pool.stats()[0].p95Ms).toBe(98);
     expect(percentile([], 50)).toBeNull();
   });
+
+  it("probe skips endpoints the admit hook rejects", async () => {
+    const fetchImpl = fakeFetch({
+      "https://a": () => ({ status: 200, body: { result: { passphrase: PASS, sequence: 100 } } }),
+      "https://b": () => ({ status: 200, body: { result: { passphrase: PASS, sequence: 100 } } }),
+    });
+    const pool = new RpcPool(["https://a", "https://b"], {
+      passphrase: PASS,
+      fetchImpl,
+      admit: (url) => url !== "https://b",
+    });
+    await pool.verifyAll();
+    const before = (fetchImpl as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+    await pool.probe();
+    const calls = (fetchImpl as unknown as { mock: { calls: [string][] } }).mock.calls.slice(before);
+    expect(calls.map((c) => c[0])).toEqual(["https://a"]);
+  });
 });
 
 describe("nextSelection", () => {

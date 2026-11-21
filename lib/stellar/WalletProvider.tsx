@@ -18,7 +18,9 @@ import { viewOf } from "./wallet-machine";
 import { TransactionTrackerProvider } from "./tx-tracker";
 import { storedPushWallet, unsubscribe as unsubscribePush } from "@/lib/notifications/push";
 import { LedgerInvalidator } from "./ledger-invalidation";
+import { integrityMonitor, registerQueryInvalidator } from "./integrity-monitor";
 import { getStoredSessionId, onAuthInvalid, onAuthSessionChanged } from "@/lib/api/client";
+import { startRefreshScheduler } from "@/lib/api/refresh-scheduler";
 import { UserScopeContext, UserScopeStore } from "@/lib/query/scope";
 import { WalletNetworkStore, type WalletNetwork } from "./wallet-network";
 import type { RpcNetworkState } from "./network-check";
@@ -90,6 +92,8 @@ export interface WalletSessionValue {
   isAuthenticated: boolean;
   isConnecting: boolean;
   error: string | null;
+  authStep?: "challenge" | "pow" | "sign" | "verify";
+  powProgress?: number;
 }
 
 export interface WalletMetaValue {
@@ -241,13 +245,26 @@ export function WalletProvider({ children, kitLoader = loadStellarWalletsKit, rp
           if (SESSION_MODE === "cookie") void logout().catch(() => {});
           else clearAuthSession();
         },
-        signIn: async (address, sign, isCurrent) => {
+        signIn: async (address, sign, isCurrent, opts) => {
           track("signin_started", {});
           try {
-            const session = await signInWithWallet(address, async (xdr, networkPassphrase) => {
-              const { signedTxXdr } = await sign(xdr, { networkPassphrase, address });
-              return signedTxXdr;
-            }, isCurrent);
+            const session = await signInWithWallet(
+              address,
+              async (xdr, networkPassphrase) => {
+                const { signedTxXdr } = await sign(xdr, { networkPassphrase, address });
+                return signedTxXdr;
+              },
+              isCurrent,
+              {
+                signal: opts?.signal,
+                onPow: (p) => {
+                  opts?.onProgress?.({ step: "pow", powProgress: p.estimatedProgress });
+                },
+                onStep: (step) => {
+                  opts?.onProgress?.({ step });
+                },
+              },
+            );
             track("signin_completed", { outcome: "success" });
             return session.walletAddress;
           } catch (error) {
@@ -304,6 +321,9 @@ export function WalletProvider({ children, kitLoader = loadStellarWalletsKit, rp
   // Starts the kit, restores a session the kit persisted (never redirects or
   // prompts), and tears the kit subscriptions down on unmount.
   useEffect(() => interpreter.start(), [interpreter]);
+
+  // Issue #269: refresh the bearer token before it expires, from one tab.
+  useEffect(() => startRefreshScheduler(), []);
 
   // In cookie mode the server is the source of truth for the session wallet:
   // migrate a legacy localStorage token once, then ask GET /auth/session.
@@ -392,6 +412,18 @@ export function WalletProvider({ children, kitLoader = loadStellarWalletsKit, rp
     return invalidator.start();
   }, [queryClient, address]);
 
+  // Live contract integrity monitor on ledger ticks and contract upgrade events
+  useEffect(() => {
+    const unregister = registerQueryInvalidator(() => {
+      void queryClient.invalidateQueries({ queryKey: ["stellar"] });
+    });
+    const stopMonitor = integrityMonitor.start();
+    return () => {
+      unregister();
+      stopMonitor();
+    };
+  }, [queryClient]);
+
   const signer = useMemo<Signer | null>(() => {
     if (!address) return null;
     return {
@@ -451,8 +483,14 @@ export function WalletProvider({ children, kitLoader = loadStellarWalletsKit, rp
     [networkSnapshot, networkStore],
   );
   const session = useMemo<WalletSessionValue>(
-    () => ({ isAuthenticated: view.isAuthenticated, isConnecting: view.isConnecting, error: view.error }),
-    [view.isAuthenticated, view.isConnecting, view.error],
+    () => ({
+      isAuthenticated: view.isAuthenticated,
+      isConnecting: view.isConnecting,
+      error: view.error,
+      authStep: view.authStep,
+      powProgress: view.powProgress,
+    }),
+    [view.isAuthenticated, view.isConnecting, view.error, view.authStep, view.powProgress],
   );
   const meta = useMemo<WalletMetaValue>(
     () => ({ selectedWalletId: address ? selectedWalletId : null }),

@@ -1,6 +1,7 @@
 import { StrKey } from "@stellar/stellar-sdk";
 import { parseAccount, parseContract, parseTxHash } from "../validation/ids";
 import deployments from "./generated/deployments.testnet.json";
+import { CONTRACT_MANIFEST } from "./generated/contract-manifest";
 import {
   DEFAULT_IPFS_GATEWAY,
   DEFAULT_IPFS_MAX_TRACE_BYTES,
@@ -98,6 +99,15 @@ export const RPC_URL = RPC_URLS[0]; // unchanged export for existing callers
 export const EXPLORER_URL = config.explorerUrl;
 
 export const CONTRACTS = config.contracts;
+
+/**
+ * When set to "1" or "true", forces legacy `buy`/`sell` invocations even when
+ * the deployed market-core contract exposes `buy_v2`/`sell_v2`.
+ * Defaults to false (auto-detect on-chain capability, defaulting to legacy when absent).
+ */
+export const FORCE_LEGACY_TRADES: boolean =
+  process.env.NEXT_PUBLIC_FORCE_LEGACY_TRADES === "1" ||
+  process.env.NEXT_PUBLIC_FORCE_LEGACY_TRADES === "true";
 
 /**
  * Expected USDC asset identifier (CODE:ISSUER). Defaults to USDC:deployer on testnet.

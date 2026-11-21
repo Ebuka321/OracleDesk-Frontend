@@ -13,6 +13,7 @@ import { formatUsdc, formatXlm } from "@/lib/stellar/units";
 import type { TxPhase } from "@/lib/stellar/tx-lifecycle";
 import type { ReviewModel } from "@/lib/stellar/tx-decode";
 import { TxReview, TxReviewPreferenceControl, shouldSkipTxReview } from "@/components/tx-review";
+import { SafeText } from "@/components/safe-text";
 import {
   deriveDailyPassExpiry,
   deriveUnlockRoutes,
@@ -242,13 +243,15 @@ function UnlockPremiumTraceContent() {
             <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
               <div>
                 <p className="font-label-caps text-label-caps text-on-surface-variant mb-1">Reasoning Trace</p>
-                <h1 className="font-headline-md text-headline-md text-on-surface">{trace.market.question}</h1>
-                <p className="mt-2 font-data-mono text-[12px] text-on-surface-variant">
-                  {trace.agentType} · edge {Math.round(trace.edge * 100)}% · estimate{" "}
+                <h1 className="font-headline-md text-headline-md text-on-surface">
+                  <SafeText text={trace.market.question} />
+                </h1>
+                <p className="mt-2 font-data-mono text-[12px] text-on-surface-variant flex items-center gap-1.5 flex-wrap">
+                  <SafeText text={trace.agentType} /> · edge {Math.round(trace.edge * 100)}% · estimate{" "}
                   {Math.round(trace.probabilityEstimate * 100)}% · {new Date(trace.createdAt).toLocaleDateString()}
                 </p>
               </div>
-              <div className="text-right">
+              <div className="text-end">
                 <span
                   className={`inline-block px-3 py-1 rounded-full font-label-caps text-label-caps font-bold ${
                     accessLevel === "DAILY_PASS" || accessLevel === "PER_TRACE"

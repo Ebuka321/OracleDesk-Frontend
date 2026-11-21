@@ -1,12 +1,14 @@
 import { describe, expectTypeOf, it } from "vitest";
 import { read } from "../typed-call";
-import type { MarketCoreClient, RegistryClient, Value } from "../typed-call";
-import { marketCore, reasoningRegistry } from "../clients";
+import type { MarketCoreClient, RegistryClient, ResolverClient, Value } from "../typed-call";
+import { marketCore, reasoningRegistry, resolver } from "../clients";
 import type { Market, Position, Outcome } from "../generated/market-core";
 import type { Trace } from "../generated/reasoning-registry";
+import type { ResolutionState } from "../generated/resolver";
 
 type MC = MarketCoreClient;
 type RR = RegistryClient;
+type RS = ResolverClient;
 
 describe("Type inference for binding return types via Value<C, K>", () => {
   it("pins return types of all binding methods used by the application", () => {
@@ -27,6 +29,10 @@ describe("Type inference for binding return types via Value<C, K>", () => {
       published_at: bigint;
     }>();
     expectTypeOf<Value<RR, "get_trace">>().toEqualTypeOf<Trace>();
+    expectTypeOf<Value<RS, "resolution_deadline">>().toEqualTypeOf<bigint>();
+    expectTypeOf<Value<RS, "expire_market">>().toEqualTypeOf<void>();
+    expectTypeOf<Value<RS, "open_fallback">>().toEqualTypeOf<void>();
+    expectTypeOf<Value<RS, "state">>().toEqualTypeOf<ResolutionState>();
   });
 
   it("guards against inference collapsing to any", () => {

@@ -10,7 +10,7 @@ import { useGenerateMarket, useMarketGenerationStatus } from "@/lib/hooks/useMar
 import { isTerminalStatus } from "@/lib/hooks/generation-status";
 import { ApiError } from "@/lib/api/client";
 import { UserFacingError } from "@/lib/stellar/errors";
-import { isAdminAddress } from "@/lib/stellar/config";
+import { useAdminPermissions } from "@/lib/admin/useAdminPermissions";
 import { reportError } from "@/lib/observability/report";
 import { shortRef, withOperation } from "@/lib/observability/tracing";
 import { DEFAULTS, serializeDiscovery } from "@/lib/markets/discovery-params";
@@ -67,6 +67,7 @@ export default function AdminCreatePage() {
 
 function AdminCreateContent() {
   const { address, withSession } = useWallet();
+  const { can, isLoading: isPermissionsLoading, isDevelopmentFallback, refetch: refreshPermissions } = useAdminPermissions();
   const generateMarket = useGenerateMarket();
   const { jobs, dismiss } = useAdminJobs(address);
   const [startError, setStartError] = useState<string | null>(null);
@@ -78,6 +79,10 @@ function AdminCreateContent() {
 
   const handleStart = async () => {
     if (!address || starting.current) return;
+    if (!can("markets.generate")) {
+      setStartError("Permission denied: You do not have markets.generate permission.");
+      return;
+    }
     starting.current = true;
     setStartError(null);
     // Issue #124: one trace across sign-in + generate so support can grep it.
@@ -88,6 +93,9 @@ function AdminCreateContent() {
         const result = await withSession(() => generateMarket.mutateAsync({ idempotencyKey }), "start a market-maker run");
         saveJob(address, { jobId: result.jobId, lastStatus: "RUNNING", lastSeenAt: Date.now(), startedAt: new Date().toISOString() });
       } catch (err) {
+        if (err instanceof ApiError && err.status === 403) {
+          void refreshPermissions();
+        }
         reportError(err, { feature: "admin" });
         setStartError(`${describeStartError(err)} Reference: ${shortRef(opCtx.traceId)}`);
       } finally {
@@ -96,13 +104,23 @@ function AdminCreateContent() {
     });
   };
 
-  // UI gate only; the backend enforces admin rights on /markets/generate.
-  if (!isAdminAddress(address)) {
+  if (isPermissionsLoading) {
+    return (
+      <main className="flex-grow flex items-center justify-center p-gutter">
+        <div className="p-8 text-center text-on-surface-variant font-label-caps animate-pulse">
+          Resolving administrative authorization…
+        </div>
+      </main>
+    );
+  }
+
+  // Gate on admin.read (to view page) and markets.generate (to run actions)
+  if (!can("admin.read") && !can("markets.generate")) {
     return (
       <main className="flex-grow flex items-center justify-center p-gutter">
         <div className="max-w-md w-full text-center space-y-4 bg-white p-10 rounded-xl border border-outline-variant shadow-sm">
           <h2 className="font-headline-md text-headline-md">Access Denied</h2>
-          <p className="text-on-surface-variant">Only OracleDesk admins can start market-maker runs.</p>
+          <p className="text-on-surface-variant">Only OracleDesk admins with market generation permission can start market-maker runs.</p>
           <p className="text-on-surface-variant text-sm font-data-mono break-all">{address}</p>
         </div>
       </main>
@@ -113,6 +131,12 @@ function AdminCreateContent() {
 
   return (
     <main className="flex-grow max-w-container-max-width mx-auto px-gutter py-12 w-full">
+      {isDevelopmentFallback && (
+        <div role="note" className="mb-6 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-700 text-xs flex items-center gap-2">
+          <Icon name="warning" className="text-sm" />
+          <span>DEVELOPMENT FALLBACK: Gated by local environment addresses, not real backend authorization. Never active in production.</span>
+        </div>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
         <div className="lg:col-span-5 space-y-8">
           <div className="space-y-2">

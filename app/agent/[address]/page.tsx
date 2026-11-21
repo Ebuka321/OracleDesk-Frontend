@@ -8,6 +8,10 @@ import { AgentProfileCard } from "@/components/agent-profile-card";
 import { createEmptyProfile, buildAgentProfile } from "@/lib/services/agent-profile";
 import { listTraces } from "@/lib/api/traces";
 
+export function generateStaticParams() {
+  return [{ address: "fallback" }];
+}
+
 export default function AgentProfilePage() {
   const params = useParams();
   const agentAddress = decodeURIComponent(params.address as string);
@@ -25,7 +29,7 @@ export default function AgentProfilePage() {
         const { traces } = await listTraces();
 
         const agentTraces = traces.filter(
-          (t) => t.onChainTraceId === agentAddress || t.agentType,
+          (t) => t.agentId === agentAddress,
         );
 
         if (agentTraces.length === 0) {
@@ -37,7 +41,7 @@ export default function AgentProfilePage() {
 
         const filledProfile = buildAgentProfile(
           agentAddress,
-          true,
+          false,
           agentTraces,
           [],
           [],
