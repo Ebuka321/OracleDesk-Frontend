@@ -258,3 +258,25 @@
 .success-pulse {
   animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+
+@media (forced-colors: active) {
+  :root {
+    --chart-yes: CanvasText;
+    --chart-no: CanvasText;
+    --chart-grid: GrayText;
+    --chart-tick: CanvasText;
+    --chart-axis: CanvasText;
+  }
+  :where(a, button, [role="button"], input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+  .probability-yes, .probability-no, [data-prob-seg] {
+    forced-color-adjust: none;
+    background: CanvasText;
+    border: 1px solid CanvasText;
+  }
+  [data-prob-seg="no"] {
+    background: repeating-linear-gradient(135deg, Canvas 0 3px, CanvasText 3px 5px);
+  }
+}

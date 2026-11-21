@@ -1,7 +1,7 @@
 import React from "react";
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { ResolverStatusPanel } from "../../resolver-status-panel";
+import { ResolverStatusPanel } from "../resolver-status-panel";
 import { VALID_TEST_SIGNER_1 } from "@/lib/stellar/__tests__/resolution-vectors.fixtures";
 import type { ResolutionSpec } from "@/lib/api/markets";
 

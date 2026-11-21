@@ -55,13 +55,13 @@ export class FakeLockManager {
     const manager = this;
     const request = ((
       name: string,
-      optionsOrCallback: LockOptions | LockGrantedCallback,
-      maybeCallback?: LockGrantedCallback,
+      optionsOrCallback: LockOptions | LockGrantedCallback<unknown>,
+      maybeCallback?: LockGrantedCallback<unknown>,
     ): Promise<unknown> => {
       const options: LockOptions =
         typeof optionsOrCallback === "function" ? {} : (optionsOrCallback ?? {});
-      const callback: LockGrantedCallback =
-        typeof optionsOrCallback === "function" ? optionsOrCallback : (maybeCallback as LockGrantedCallback);
+      const callback: LockGrantedCallback<unknown> =
+        typeof optionsOrCallback === "function" ? optionsOrCallback : (maybeCallback as LockGrantedCallback<unknown>);
       return manager.requestForClient(clientId, name, options, callback);
     }) as LockManager["request"];
 

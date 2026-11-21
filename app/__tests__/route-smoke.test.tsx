@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
 import { render, cleanup } from "@testing-library/react";
@@ -204,7 +205,7 @@ describe("Route smoke suite", () => {
         const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
         try {
-          const mod = await loader();
+          const mod = await (loader as () => Promise<{ default: React.ComponentType<Record<string, unknown>> }>)();
           const Page = mod.default;
           const kit = createFakeKit({
             address: walletState === "connected" ? FAKE_ADDRESS : null,

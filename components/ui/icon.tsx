@@ -2,6 +2,7 @@ import type { SVGProps } from "react";
 import {
   Activity,
   AlertCircle,
+  AlertTriangle,
   ArrowDown,
   ArrowDownLeft,
   ArrowLeft,
@@ -158,6 +159,8 @@ export const ICONS = {
   verified_user: ShieldCheck,
   visibility: Eye,
   visibility_off: EyeOff,
+  warning: AlertTriangle,
+  find_match: Search,
   workspace_premium: Award,
 } as const;
 

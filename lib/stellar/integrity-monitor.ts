@@ -286,6 +286,9 @@ export class IntegrityMonitor {
 let queryInvalidator: (() => void) | null = null;
 export function registerQueryInvalidator(fn: () => void) {
   queryInvalidator = fn;
+  return () => {
+    if (queryInvalidator === fn) queryInvalidator = null;
+  };
 }
 
 export const integrityMonitor = new IntegrityMonitor({

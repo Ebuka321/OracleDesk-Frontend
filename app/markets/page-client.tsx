@@ -20,15 +20,10 @@ import { QuestionVerificationBadge } from "@/components/question-verification-ba
 import { SafeText } from "@/components/safe-text";
 import { bytesToHex } from "@/lib/stellar/typed-call";
 import { userMessage } from "@/lib/errors/display";
-
-const SourceTag = ({ source }: { source: "chain" | "backend" }) => (
-  <span
-    title={source === "chain" ? "Read live from the market contract" : "OracleDesk backend estimate; may lag the chain"}
-    className={`ms-1 text-[9px] font-bold uppercase px-1 rounded ${source === "chain" ? "bg-secondary-container text-on-secondary-container" : "bg-surface-container-highest text-on-surface-variant"}`}
-  >
-    {source}
-  </span>
-);
+import { SourceTag } from "@/components/ui/source-tag";
+import { ProbabilityBar } from "@/components/ui/probability-bar";
+import { useProvisionalPrice } from "@/lib/realtime/RealtimeProvider";
+import { reconcileDisplayPrice } from "@/lib/realtime/market-price-store";
 
 function chainStatusLabel(view: OnChainMarketView | undefined): string {
   if (!view) return "—";
@@ -199,33 +194,7 @@ const MarketCard = ({ href, category, onChainMarketId, reasoningTraces, expiry, 
               <span className="text-secondary">YES {yesProb}%<SourceTag source={priceSource} ledger={priceLedger} readAt={priceReadAt} /></span>
               <span className="text-tertiary">NO {noProb}%</span>
             </div>
-            <div className="w-full h-2 rounded-full bg-outline-variant overflow-hidden flex">
-              {shouldAnimate ? (
-                <>
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${yesProb}%` }}
-                    className="h-full bg-secondary transition-all duration-700" 
-                  />
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${noProb}%` }}
-                    className="h-full bg-tertiary transition-all duration-700" 
-                  />
-                </>
-              ) : (
-                <>
-                  <div 
-                    style={{ width: `${yesProb}%` }}
-                    className="h-full bg-secondary transition-all duration-700" 
-                  />
-                  <div 
-                    style={{ width: `${noProb}%` }}
-                    className="h-full bg-tertiary transition-all duration-700" 
-                  />
-                </>
-              )}
-            </div>
+            <ProbabilityBar yes={yesProb} no={noProb} heightClassName="h-2" />
           </div>
           <div className="grid grid-cols-2 gap-4 border-t border-outline-variant/30 pt-4">
             <div>
