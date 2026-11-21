@@ -10,6 +10,7 @@ import {
   storeAuthSession,
   isAuthError,
   replaceToken,
+  type ApiRequestOptions,
 } from "./client";
 import { validateSEP10Challenge, type SEP10ValidationError } from "@/lib/stellar/sep10-validator";
 import { broadcastSessionChange } from "./cross-tab-sync";
@@ -17,8 +18,38 @@ import { TransactionBuilder } from "@stellar/stellar-sdk";
 import { NETWORK_PASSPHRASE } from "@/lib/stellar/config";
 import { NetworkMismatchError } from "@/lib/stellar/network-check";
 import { sha256Hex } from "@/lib/stellar/trace";
-import { withOperation } from "@/lib/observability/tracing";
+import { withOperation, type TraceCtx } from "@/lib/observability/tracing";
 import { AuthChallengeSchema } from "./schemas";
+import { solvePow } from "@/lib/auth/pow-runner";
+import { baseAccountOf } from "@/lib/auth/pow";
+import { UserFacingError } from "@/lib/stellar/errors";
+
+export interface PowProgress {
+  tried: number;
+  estimatedProgress: number;
+  bits: number;
+}
+
+export interface RequestChallengeOptions extends ApiRequestOptions {
+  memo?: string;
+  onPow?: (p: PowProgress) => void;
+}
+
+const DEFAULT_AUTH_POW_MAX_BITS = 24;
+export const POW_MAX_BITS =
+  typeof process !== "undefined" && process.env.NEXT_PUBLIC_AUTH_POW_MAX_BITS
+    ? parseInt(process.env.NEXT_PUBLIC_AUTH_POW_MAX_BITS, 10)
+    : DEFAULT_AUTH_POW_MAX_BITS;
+
+function parseXAuthPow(header: string | null | undefined): { bits?: number; salt?: string } {
+  if (!header) return {};
+  const bitsMatch = header.match(/bits=(\d+)/i);
+  const saltMatch = header.match(/salt=([a-f0-9]+)/i);
+  return {
+    bits: bitsMatch ? parseInt(bitsMatch[1], 10) : undefined,
+    salt: saltMatch ? saltMatch[1] : undefined,
+  };
+}
 
 export interface AuthSession {
   token?: string;
@@ -49,16 +80,109 @@ export interface AuthChallenge {
   expiresAt: string;
 }
 
-export async function requestChallenge(address: string, options?: ApiRequestOptions) {
-  const { data } = await apiClient.post<AuthChallenge>("/auth/challenge", { address }, undefined, { ...options, schema: AuthChallengeSchema });
-  return data;
+export async function requestChallenge(
+  address: string,
+  options?: RequestChallengeOptions,
+): Promise<AuthChallenge> {
+  const account = baseAccountOf(address);
+  let attempts = 0;
+  let currentPow: { nonce: string; salt: string } | undefined = undefined;
+
+  while (attempts < 3) {
+    attempts++;
+    try {
+      const payload: { address: string; memo?: string; pow?: { nonce: string; salt: string } } = {
+        address,
+        ...(options?.memo ? { memo: options.memo } : {}),
+        ...(currentPow ? { pow: currentPow } : {}),
+      };
+
+      const { data } = await apiClient.post<AuthChallenge>(
+        "/auth/challenge",
+        payload,
+        undefined,
+        { ...options, schema: AuthChallengeSchema },
+      );
+      return data;
+    } catch (err) {
+      if (err instanceof ApiError && (err.code === "POW_REQUIRED" || err.code === "POW_INVALID")) {
+        if (attempts >= 3) {
+          throw new UserFacingError({
+            kind: "unknown",
+            message: "Sign-in proof-of-work failed. Please try again.",
+          }, err);
+        }
+
+        let bits: number | undefined;
+        let salt: string | undefined;
+
+        if (err.code === "POW_REQUIRED") {
+          const details = err.details as { bits?: number; salt?: string } | undefined;
+          const headerPow = parseXAuthPow(err.headers?.get("x-auth-pow"));
+          bits = details?.bits ?? headerPow.bits;
+          salt = details?.salt ?? headerPow.salt;
+        } else if (err.code === "POW_INVALID") {
+          const powRes = await apiClient.get<{ bits: number; salt: string }>(
+            "/auth/challenge/pow",
+            undefined,
+            { signal: options?.signal },
+          );
+          bits = powRes.data.bits;
+          salt = powRes.data.salt;
+        }
+
+        if (bits === undefined || !salt) {
+          throw err;
+        }
+
+        if (bits > POW_MAX_BITS) {
+          throw new UserFacingError({
+            kind: "unknown",
+            message: "Sign-in is under heavy load. Try again in a minute.",
+          }, err);
+        }
+
+        if (err.retryAfterSeconds && err.retryAfterSeconds > 0) {
+          await new Promise((resolve) => setTimeout(resolve, err.retryAfterSeconds! * 1000));
+        }
+
+        const nonce = await solvePow({
+          account,
+          salt,
+          bits,
+          signal: options?.signal,
+          onProgress: options?.onPow,
+        });
+
+        currentPow = { nonce, salt };
+        continue;
+      }
+
+      throw err;
+    }
+  }
+
+  throw new UserFacingError({
+    kind: "unknown",
+    message: "Sign-in proof-of-work failed. Please try again.",
+  });
 }
 
-export async function verifyChallenge(address: string, signed: string, isCurrent: () => boolean = () => true) {
+export async function verifyChallenge(
+  address: string,
+  signed: string,
+  isCurrent: () => boolean = () => true,
+  trace?: TraceCtx,
+  extraHeaders?: Record<string, string>,
+) {
   const { data } = await apiClient.post<AuthSession>(
     "/auth/verify",
     { address, signed },
-    SESSION_MODE === "cookie" ? { "X-Session-Mode": "cookie" } : undefined,
+    {
+      ...(SESSION_MODE === "cookie" ? { "X-Session-Mode": "cookie" } : {}),
+      ...extraHeaders,
+    },
+    { trace },
   );
   if (!isCurrent() || data.walletAddress !== address) throw new Error("Your account changed; sign in again.");
   storeAuthSession(data);
@@ -189,10 +313,16 @@ export async function signInWithWallet(
   address: string,
   signTransaction: (xdr: string, networkPassphrase: string) => Promise<string>,
   isCurrent: () => boolean = () => true,
+  opts: {
+    signal?: AbortSignal;
+    onPow?: (p: PowProgress) => void;
+    onStep?: (step: "challenge" | "pow" | "sign" | "verify") => void;
+  } = {},
 ): Promise<AuthSession> {
   // Serialize logout → sign-in so a late logout response cannot clear the new cookie.
   await pendingLogout.catch(() => undefined);
-  const challenge = await requestChallenge(address);
+  return withOperation("sign-in", async (trace) => {
+    const challenge = await requestChallenge(address, { trace });
 
     if (challenge.networkPassphrase !== NETWORK_PASSPHRASE) {
       throw new NetworkMismatchError(NETWORK_PASSPHRASE, challenge.networkPassphrase);
@@ -208,8 +338,10 @@ export async function signInWithWallet(
     }
 
     if (!isCurrent()) throw new Error("Your account changed; sign in again.");
+    opts.onStep?.("sign");
     const signed = await signTransaction(challenge.transaction, challenge.networkPassphrase);
     if (!isCurrent()) throw new Error("Your account changed; sign in again.");
+    opts.onStep?.("verify");
     return verifyChallenge(address, signed, isCurrent, trace, {
       "X-Challenge-Hash": await challengeHash(challenge.transaction),
     });

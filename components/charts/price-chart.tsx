@@ -288,7 +288,7 @@ export default function PriceChart({
           </>
         )}
         {resolved && (
-          <div className="flex items-center gap-1.5 ml-2">
+          <div className="flex items-center gap-1.5 ms-2">
             <span className="w-4 h-0.5 border-t-2 border-dashed inline-block" style={{ borderColor: "var(--chart-axis)" }} />
             <span className="font-label-caps text-[10px]" style={{ color: "var(--chart-axis)" }}>RESOLVED</span>
           </div>

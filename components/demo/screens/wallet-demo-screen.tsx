@@ -54,7 +54,7 @@ export function WalletDemoScreen() {
           onDisconnect={() => setIsOpen(false)}
         />
       </div>
-      <div className="absolute top-4 left-4">
+      <div className="absolute top-4 start-4">
         <DemoBadge />
       </div>
     </div>

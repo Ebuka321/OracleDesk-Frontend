@@ -10,8 +10,9 @@ import { read } from "@/lib/stellar/typed-call";
 import { decodeEvent, eventTopicFilter, fetchEventRange, type ChainEvent } from "@/lib/stellar/events";
 import type { Position } from "@/lib/stellar/generated/market-core";
 import type { Stamped } from "@/lib/stellar/optimistic";
-import { usePrivateRealtimeEvents, useRealtimeBatch } from "@/lib/realtime/RealtimeProvider";
-import { classifyTrade, classifyTrace, classifyResolved, classifyRedeemed, classifyTracked, classifyPassExpiring } from "./classify";
+import { useRealtimeBatch } from "@/lib/realtime/RealtimeProvider";
+import { classifyTrade, classifyTrace, classifyResolved, classifyRedeemed, classifyTracked, classifyDeadline } from "./classify";
+import { ledgerClock } from "@/lib/stellar/ledger-clock";
 import { openInbox, type Inbox, type InboxItem } from "./store";
 
 interface InboxView {
@@ -147,6 +148,11 @@ function ConnectedInbox({ owner, children }: { owner: string; children: ReactNod
               const item = classifyResolved({ id: `status:${id}`, name: "MarketResolved", ledger: marketTx.simulation!.latestLedger,
                 closedAt: new Date().toISOString(), txHash: "", data: { market_id: BigInt(id), outcome: market.status.tag === "Void" ? undefined : market.status.values[0] } }, owner, position);
               if (item) synthetic.push(item);
+            } else if (market.status.tag === "Open") {
+              const nowSec = ledgerClock.now() ?? ledgerClock.estimateNow().time;
+              const unc = BigInt(Math.ceil(ledgerClock.uncertainty()));
+              const dlItem = classifyDeadline(id, BigInt(market.close_time), BigInt(Math.floor(nowSec)), owner, position, unc);
+              if (dlItem) synthetic.push(dlItem);
             }
           } else held.current.delete(id);
         }

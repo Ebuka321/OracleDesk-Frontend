@@ -86,14 +86,14 @@ export function HealthIndicator() {
         <div
           role="dialog"
           aria-label="Data freshness and connection health"
-          className="absolute right-0 top-full mt-2 w-72 bg-white border border-outline-variant rounded-lg shadow-xl p-4 z-50"
+          className="absolute end-0 top-full mt-2 w-72 bg-white border border-outline-variant rounded-lg shadow-xl p-4 z-50"
         >
           <p className="font-label-caps text-label-caps text-on-surface-variant uppercase mb-3">Data sources</p>
           <ul className="space-y-2 mb-3">
             {rows.map((row) => (
               <li key={row.name} className="flex justify-between gap-3 text-body-md">
                 <span className="text-on-surface-variant">{row.name}</span>
-                <span className="font-data-mono text-on-surface text-right">{row.value}</span>
+                <span className="font-data-mono text-on-surface text-end">{row.value}</span>
               </li>
             ))}
           </ul>

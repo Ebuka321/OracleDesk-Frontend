@@ -3,13 +3,15 @@ import { Icon } from "@/components/ui/icon";
 
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
-import { Address, StrKey } from "@stellar/stellar-sdk";
 import { RequireWallet } from "@/components/require-wallet";
 import { useWalletAddress } from "@/lib/contexts/WalletContext";
 import { useAgents, useRegisterAgent, useRegistryAdmin, useUnregisterAgent, simulateAgentAction, type AgentAction, type AgentRow, type AgentSource } from "@/lib/hooks/useAgents";
 import { CONTRACTS, explorerAccount, explorerTx } from "@/lib/stellar/config";
 import { useAdminPermissions } from "@/lib/admin/useAdminPermissions";
 import { describeError } from "@/lib/stellar/errors";
+import { AddressInput } from "@/components/ui/address-input";
+import { knownAddresses } from "@/lib/stellar/address-book";
+import type { PolicyCheckedAddress } from "@/lib/stellar/address-policy";
 
 const SOURCE_LABELS: Record<AgentSource, string> = {
   "event:registered": "AgentRegistered event",
@@ -19,7 +21,7 @@ const SOURCE_LABELS: Record<AgentSource, string> = {
 };
 
 const SourceBadge = ({ source }: { source: AgentSource }) => (
-  <span className="inline-block mr-1 mb-1 px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant text-[10px] font-label-caps uppercase tracking-wide">
+  <span className="inline-block me-1 mb-1 px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant text-[10px] font-label-caps uppercase tracking-wide">
     {SOURCE_LABELS[source]}
   </span>
 );
@@ -62,6 +64,7 @@ function AdminAgentsContent() {
   const unregister = useUnregisterAgent();
 
   const [input, setInput] = useState("");
+  const [validatedAgent, setValidatedAgent] = useState<PolicyCheckedAddress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [review, setReview] = useState<{ action: AgentAction; agent: string } | null>(null);
   const [reviewing, setReviewing] = useState(false);
@@ -77,15 +80,18 @@ function AdminAgentsContent() {
   const busy = register.isPending || unregister.isPending;
   const days = windowsDays(agents.data?.window);
 
-  if (isPermissionsLoading) {
-    return (
-      <main className="flex-grow flex items-center justify-center p-gutter">
-        <div className="p-8 text-center text-on-surface-variant font-label-caps animate-pulse">
-          Resolving administrative authorization…
-        </div>
-      </main>
-    );
-  }
+  const known = useMemo(
+    () =>
+      knownAddresses(
+        address,
+        rows.map((r) => ({
+          address: r.address,
+          label: r.registered ? "Registered Agent" : "Registry Agent",
+          source: "registry" as const,
+        })),
+      ),
+    [address, rows],
+  );
 
   if (!authorized) {
     return (
@@ -99,25 +105,15 @@ function AdminAgentsContent() {
     );
   }
 
-  const normalize = (value: string): string | null => {
-    const trimmed = value.trim();
-    if (!StrKey.isValidEd25519PublicKey(trimmed) && !StrKey.isValidContract(trimmed)) return null;
-    try {
-      return Address.fromString(trimmed).toString();
-    } catch {
-      return null;
-    }
-  };
-
-  const startReview = async (action: AgentAction, candidate: string) => {
+  const startReview = async (action: AgentAction, candidate: PolicyCheckedAddress | null) => {
     setError(null);
     setTxHash(null);
     setTyped("");
-    const agent = normalize(candidate);
-    if (!agent) {
-      setError("Enter a valid Stellar account (G…) or contract (C…) address.");
+    if (!candidate) {
+      setError("Complete address verification and confirmation above.");
       return;
     }
+    const agent = candidate;
     if (!address) {
       setError("Connect your wallet first.");
       return;
@@ -217,31 +213,31 @@ function AdminAgentsContent() {
           <label className="block font-label-caps text-label-caps text-on-surface-variant" htmlFor="agent-address">
             AGENT ADDRESS
           </label>
-          <input
+          <AddressInput
             id="agent-address"
             value={input}
-            onChange={(event) => { setInput(event.target.value); setReview(null); setError(null); }}
+            onChange={(next) => { setInput(next); setReview(null); setError(null); }}
+            onValidated={setValidatedAgent}
+            policy="authority"
+            expect="any"
+            known={known}
+            knownLoading={agents.isLoading}
             placeholder="G… or C…"
-            className="w-full bg-surface border border-outline-variant rounded p-3 font-data-mono text-sm outline-none focus:ring-2 focus:ring-primary"
+            className="bg-surface p-3 text-sm"
           />
-          {input && (
-            <p className="text-xs text-on-surface-variant break-all">
-              {normalize(input) ? <>Normalized: <span className="font-data-mono">{normalize(input)}</span></> : "Not a valid G… or C… address."}
-            </p>
-          )}
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              disabled={reviewing || notAdmin || busy}
-              onClick={() => void startReview("register", input)}
+              disabled={!validatedAgent || reviewing || notAdmin || busy}
+              onClick={() => void startReview("register", validatedAgent)}
               className="bg-primary text-primary-foreground px-4 py-3 rounded-lg font-label-caps text-label-caps disabled:opacity-50"
             >
               {reviewing ? "SIMULATING…" : "REVIEW REGISTER"}
             </button>
             <button
               type="button"
-              disabled={reviewing || notAdmin || busy}
-              onClick={() => void startReview("unregister", input)}
+              disabled={!validatedAgent || reviewing || notAdmin || busy}
+              onClick={() => void startReview("unregister", validatedAgent)}
               className="border border-outline text-on-surface px-4 py-3 rounded-lg font-label-caps text-label-caps disabled:opacity-50"
             >
               REVIEW UNREGISTER
@@ -315,7 +311,7 @@ function AdminAgentsContent() {
             <p className="p-8 text-center text-on-surface-variant">No agents found in this window and no configured addresses.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="w-full text-start text-sm">
                 <thead className="bg-surface-container-low text-on-surface-variant text-[11px] uppercase tracking-wide">
                   <tr>
                     <th className="px-4 py-3">Agent</th>

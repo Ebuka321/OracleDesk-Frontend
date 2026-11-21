@@ -88,7 +88,7 @@ function StorageSection() {
       <div className="space-y-1">
         {status.stores.map((s) => (
           <div key={s.id} className="flex items-center justify-between text-xs text-on-surface-variant">
-            <span>{s.id} <span className="ml-1 text-outline">({s.cls})</span></span>
+            <span>{s.id} <span className="ms-1 text-outline">({s.cls})</span></span>
             <span>{formatBytes(s.bytes)}</span>
           </div>
         ))}
@@ -163,7 +163,7 @@ export default function SettingsPage() {
           </SettingsSection>
           <SettingsSection title="Wallet" icon="account_balance_wallet">
             {wallet.isConnected && wallet.address
-              ? <div className="flex items-center justify-between rounded border border-outline-variant bg-surface-container-low p-4"><div><p className="text-xs text-on-surface-variant">Connected wallet</p><p className="font-data-mono">{shortAddress(wallet.address, 6, 6)} <span className="ml-2 text-xs text-secondary">{NETWORK_LABEL}</span></p></div><Link href="/portfolio/wallets" className="text-primary hover:underline">Manage</Link></div>
+              ? <div className="flex items-center justify-between rounded border border-outline-variant bg-surface-container-low p-4"><div><p className="text-xs text-on-surface-variant">Connected wallet</p><p className="font-data-mono">{shortAddress(wallet.address, 6, 6)} <span className="ms-2 text-xs text-secondary">{NETWORK_LABEL}</span></p></div><Link href="/portfolio/wallets" className="text-primary hover:underline">Manage</Link></div>
               : <button onClick={() => void wallet.openModal()} className="rounded bg-primary px-4 py-2 text-white">Connect wallet</button>}
           </SettingsSection>
           <SettingsSection title="Trace spending limits" icon="payments">

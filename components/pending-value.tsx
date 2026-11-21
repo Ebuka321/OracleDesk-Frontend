@@ -6,6 +6,6 @@ export function PendingValue({ state, fallback = null }: { state: Stamped<unknow
   const pending = state?.provisional ?? state?.awaitingRpc;
   if (!pending) return fallback;
   const label = state?.awaitingRpc ? "awaiting RPC" : "pending confirmation";
-  return <span className="ml-2 text-xs text-on-surface-variant" role="status">{pending.txHash
+  return <span className="ms-2 text-xs text-on-surface-variant" role="status">{pending.txHash
     ? <a className="underline" href={explorerTx(pending.txHash) ?? undefined} target="_blank" rel="noreferrer">{label}</a> : label}</span>;
 }

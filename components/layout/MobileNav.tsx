@@ -65,7 +65,7 @@ export function MobileNav() {
             aria-label="Site navigation"
             aria-labelledby={undefined}
             aria-describedby={undefined}
-            className="fixed inset-y-0 left-0 z-50 h-full w-72 max-w-[85vw] bg-surface border-r border-outline-variant shadow-2xl p-6 flex flex-col justify-between overflow-y-auto focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left duration-300 motion-reduce:animate-none"
+            className="fixed inset-y-0 start-0 z-50 h-full w-72 max-w-[85vw] bg-surface border-e border-outline-variant shadow-2xl p-6 flex flex-col justify-between overflow-y-auto focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left duration-300 motion-reduce:animate-none"
           >
             <div>
               <div className="flex items-center justify-between pb-4 border-b border-outline-variant">
@@ -106,7 +106,7 @@ export function MobileNav() {
                           />
                         </button>
                         {isExpanded && (
-                          <div className="pl-4 space-y-1 border-l-2 border-outline-variant ml-3">
+                          <div className="ps-4 space-y-1 border-s-2 border-outline-variant ms-3">
                             {item.children.map((child) => {
                               const isExact = currentHref === child.href;
                               return (

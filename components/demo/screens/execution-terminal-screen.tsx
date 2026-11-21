@@ -15,7 +15,7 @@ export function ExecutionTerminalScreen() {
 
   return (
     <div className="relative flex min-h-[560px] items-center justify-center rounded-lg bg-surface-container-low/40 p-6">
-      <div className="absolute top-4 left-4">
+      <div className="absolute top-4 start-4">
         <DemoBadge />
       </div>
       <div className="space-y-4">

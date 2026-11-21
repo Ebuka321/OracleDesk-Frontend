@@ -67,7 +67,7 @@ const MarketItem = ({ title, status, volume, volumeLabel = "Liquidity" }: { titl
         <span className="text-[11px] text-on-surface-variant uppercase font-label-caps">{status}</span>
       </div>
     </div>
-    <div className="text-right">
+    <div className="text-end">
       <p className="font-data-mono text-data-mono text-on-surface">{volume}</p>
       <p className="text-[11px] text-on-surface-variant uppercase font-label-caps text-[10px]">{volumeLabel}</p>
     </div>
@@ -175,6 +175,15 @@ function AdminContent() {
             >
               <Icon name="verified_user" />
               ROLES &amp; ACCESS
+            </Link>
+          )}
+          {can("reconciliation.run") && (
+            <Link
+              href="/admin/reconciliation"
+              className="border border-outline text-on-surface px-6 py-4 rounded-lg font-label-caps text-label-caps flex items-center gap-2 hover:bg-surface-container-low transition-all"
+            >
+              <Icon name="find_match" />
+              RECONCILIATION
             </Link>
           )}
         </div>

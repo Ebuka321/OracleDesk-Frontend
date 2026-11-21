@@ -8,6 +8,7 @@ import { authExpirationLedger, signatureWeight, type MultisigSession } from "@/l
 import { useImportMultisig, useSubmitMultisig } from "@/lib/hooks/useStellar";
 import { useWallet } from "@/lib/contexts/WalletContext";
 import { formatUsdc, formatXlm } from "@/lib/stellar/units";
+import { AddressText } from "@/components/ui/address-text";
 
 function contractName(contractId: string): string {
   if (contractId === CONTRACTS.marketCore) return "Market core";
@@ -171,7 +172,7 @@ export function MultisigReview({
               {Object.entries(session.args ?? {}).map(([k, v]) => (
                 <div key={k} className="grid grid-cols-[9rem_1fr] gap-3">
                   <dt className="text-sm text-on-surface-variant">{k}</dt>
-                  <dd className="break-all text-sm font-medium">{formatArg(k, v)} <span className="ml-2 font-data-mono text-xs text-on-surface-variant">{v}</span></dd>
+                  <dd className="break-all text-sm font-medium">{formatArg(k, v)} <span className="ms-2 font-data-mono text-xs text-on-surface-variant">{v}</span></dd>
                 </div>
               ))}
             </dl>
@@ -226,7 +227,7 @@ export function MultisigReview({
               {session.auth.signers.map((s) => (
                 <li key={s.key} className="flex items-center justify-between font-data-mono text-xs">
                   <span className={weightInfo.signedBy.includes(s.key) ? "text-primary font-bold" : "text-on-surface-variant"}>
-                    {s.key.slice(0, 6)}…{s.key.slice(-4)} ({s.type}, w{s.weight}) {weightInfo.signedBy.includes(s.key) ? "✓" : ""}
+                    <AddressText address={s.key} compact /> ({s.type}, w{s.weight}) {weightInfo.signedBy.includes(s.key) ? "✓" : ""}
                   </span>
                   <span>weight {s.weight}</span>
                 </li>
@@ -238,8 +239,8 @@ export function MultisigReview({
             {weightInfo.unknown > 0 && (
               <p className="mt-1 text-xs text-error">Warning: {weightInfo.unknown} unknown/invalid signature(s). They cause tx_bad_auth_extra — strip them before submitting.</p>
             )}
-            {coordinatorWarn && (
-              <p className="mt-1 text-xs text-amber-800">The connected wallet ({address?.slice(0, 6)}…) is not one of this account&apos;s signers. You can still coordinate, but &quot;Sign with connected wallet&quot; will add an unknown signature.</p>
+            {coordinatorWarn && address && (
+              <p className="mt-1 text-xs text-amber-800">The connected wallet (<AddressText address={address} compact />) is not one of this account&apos;s signers. You can still coordinate, but &quot;Sign with connected wallet&quot; will add an unknown signature.</p>
             )}
             {session.nonInvoker.length > 0 ? (
               <div className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs">

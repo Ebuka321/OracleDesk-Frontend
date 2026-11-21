@@ -143,7 +143,7 @@ export function TxReview({ model, changedFrom, confirming = false, onConfirm, on
                   <dt className="text-sm text-on-surface-variant">{arg.label}</dt>
                   <dd className={`min-w-0 break-all text-sm ${changedClass(changedLabels.has(arg.label))}`}>
                     <span className="font-medium">{arg.display}</span>
-                    <span className="ml-2 font-data-mono text-xs text-on-surface-variant">({arg.type})</span>
+                    <span className="ms-2 font-data-mono text-xs text-on-surface-variant">({arg.type})</span>
                     {arg.derivedFrom && <span className="mt-1 block text-xs text-primary">From quote: {arg.derivedFrom}</span>}
                   </dd>
                 </div>

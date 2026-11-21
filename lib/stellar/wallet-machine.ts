@@ -33,6 +33,8 @@ export type WalletState =
       network: string | null;
       /** Sign-in attempt number. Results for any other attempt are stale. */
       attempt: number;
+      step?: "challenge" | "pow" | "sign" | "verify";
+      powProgress?: number;
     };
 
 export interface ConnectedState {
@@ -61,6 +63,13 @@ export type WalletEvent =
   | { type: "ENSURE_SESSION" }
   | { type: "SIGNIN_SUCCEEDED"; epoch: number; attempt: number; wallet: string }
   | { type: "SIGNIN_FAILED"; epoch: number; attempt: number; message: string }
+  | {
+      type: "AUTH_PROGRESS";
+      epoch: number;
+      attempt: number;
+      step: "challenge" | "pow" | "sign" | "verify";
+      powProgress?: number;
+    }
   | { type: "DISCONNECT_REQUESTED" };
 
 export type WalletEffect =
@@ -305,6 +314,14 @@ export function transition(s: WalletState, e: WalletEvent): Transition {
       };
     }
 
+    case "AUTH_PROGRESS":
+      if (s.tag !== "authenticating" || e.epoch !== s.epoch || e.attempt !== s.attempt) return stay(s);
+      return stay({
+        ...s,
+        step: e.step,
+        powProgress: e.powProgress !== undefined ? e.powProgress : s.powProgress,
+      });
+
     case "DISCONNECT_REQUESTED": {
       const effects: WalletEffect[] = [
         { type: "kitDisconnect" },
@@ -326,10 +343,18 @@ export interface WalletView {
   walletNetworkPassphrase: string | null;
   isAuthenticated: boolean;
   error: string | null;
+  authStep?: "challenge" | "pow" | "sign" | "verify";
+  powProgress?: number;
 }
 
 export function viewOf(s: WalletState): WalletView {
-  const base = { walletNetworkPassphrase: null, isAuthenticated: false, error: null } as const;
+  const base = {
+    walletNetworkPassphrase: null,
+    isAuthenticated: false,
+    error: null,
+    authStep: undefined,
+    powProgress: undefined,
+  } as const;
   switch (s.tag) {
     case "loading-kit":
     case "restoring":
@@ -348,6 +373,8 @@ export function viewOf(s: WalletState): WalletView {
         walletNetworkPassphrase: s.network,
         isAuthenticated: false,
         error: null,
+        authStep: s.step ?? "challenge",
+        powProgress: s.powProgress,
       };
     case "connected":
       return {
@@ -357,6 +384,8 @@ export function viewOf(s: WalletState): WalletView {
         walletNetworkPassphrase: s.network,
         isAuthenticated: isAuthenticatedState(s),
         error: s.error,
+        authStep: undefined,
+        powProgress: undefined,
       };
   }
 }

@@ -141,7 +141,7 @@ export function TradeAttributionView({
                     </p>
                   </div>
 
-                  <div className="text-right">
+                  <div className="text-end">
                     <div className="text-xs font-label-caps text-on-surface-variant mb-1">
                       {confidenceLabel}
                     </div>
@@ -158,7 +158,7 @@ export function TradeAttributionView({
                   {attribution.trace && (
                     <div className="text-xs text-on-surface">
                       <span className="font-bold">Matching trace:</span>
-                      <span className="font-data-mono ml-2 break-all">
+                      <span className="font-data-mono ms-2 break-all">
                         {attribution.trace.traceId.substring(0, 16)}...
                       </span>
                       {attribution.trace.onChainTraceId && (

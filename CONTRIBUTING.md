@@ -299,4 +299,12 @@ All errors in OracleDesk use a stable, typed taxonomy with localized messages in
 - **Client/Wallet errors**: Defined in `DESCRIBED_ERROR_KINDS` in `lib/errors/codes.ts` with catalog entries under `errors.kind.*`.
 - **Displaying in UI**: Always render errors via `userMessage(err)` from `lib/errors/display.ts` instead of raw `err.message`.
 
+## Right-to-left (RTL) layout
+
+- **Logical Tailwind utilities**: Always use logical properties (`ms-*`, `me-*`, `ps-*`, `pe-*`, `start-*`, `end-*`, `text-start`, `text-end`, `rounded-s-*`, `rounded-e-*`, `border-s`, `border-e`) in `app/` and `components/`. ESLint rejects physical `ml-/mr-/pl-/pr-/left-/right-/text-left/text-right` utilities unless annotated with `// rtl-physical-ok`.
+- **Symmetric centering**: `left-1/2 -translate-x-1/2` is symmetric and may remain physical.
+- **Bidi isolation (`<Ltr>`)**: Wrap Stellar G-addresses, C-contract IDs, transaction hashes, IPFS CIDs, on-chain IDs (`#12`), and amount+unit pairs (`1,234.50 USDC`) in `<Ltr>` (`components/ui/ltr.tsx`) so the bidi algorithm cannot reorder characters in RTL locales.
+- **Icon mirroring**: Pass `mirror` to `<Icon>` for navigation-direction icons (`chevron_right`, `arrow_forward`, `arrow_back`). Do **not** mirror value/flow-semantics icons (`trending_up`, `trending_down`, `north_east`, `south_west`).
+
+
 

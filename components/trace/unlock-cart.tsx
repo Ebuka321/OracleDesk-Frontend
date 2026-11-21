@@ -128,14 +128,14 @@ export function UnlockCart({ cart, dailyPassPriceRaw }: { cart: ReturnType<typeo
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-40 px-5 py-3 bg-primary text-primary-foreground rounded-full shadow-lg font-label-caps text-label-caps flex items-center gap-2"
+        className="fixed bottom-6 end-6 z-40 px-5 py-3 bg-primary text-primary-foreground rounded-full shadow-lg font-label-caps text-label-caps flex items-center gap-2"
       >
         <Icon name="shopping_cart" aria-hidden />
         Unlock list ({items.length})
       </button>
 
       {open && (
-        <aside role="dialog" aria-label="Unlock list" className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-surface border-l border-outline-variant shadow-xl flex flex-col">
+        <aside role="dialog" aria-label="Unlock list" className="fixed inset-y-0 end-0 z-50 w-full max-w-md bg-surface border-s border-outline-variant shadow-xl flex flex-col">
           <div className="p-6 border-b border-outline-variant flex items-center justify-between">
             <h2 className="font-headline-sm text-headline-sm">Unlock list</h2>
             <button type="button" onClick={() => setOpen(false)} disabled={running} className="text-on-surface-variant hover:text-on-surface disabled:opacity-50" aria-label="Close unlock list">

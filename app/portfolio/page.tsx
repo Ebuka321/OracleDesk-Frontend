@@ -26,6 +26,10 @@ import { VirtualTableBody } from "@/components/ui/virtual-list";
 import { ExportHistoryDialog } from "@/components/portfolio/export-history-dialog";
 import { PendingCopyTrades } from "@/components/copy-trade/PendingCopyTrades";
 import { SourceTag } from "@/components/ui/source-tag";
+import { AddressInput } from "@/components/ui/address-input";
+import { AddressText } from "@/components/ui/address-text";
+import { knownAddresses } from "@/lib/stellar/address-book";
+import { classify, type PolicyCheckedAddress } from "@/lib/stellar/address-policy";
 
 const TerminalLog = () => {
   const [logs, setLogs] = useState([
@@ -69,7 +73,7 @@ const TerminalLog = () => {
           <div className="w-3 h-3 rounded-full bg-error"></div>
           <div className="w-3 h-3 rounded-full bg-secondary-fixed"></div>
           <div className="w-3 h-3 rounded-full bg-primary-fixed"></div>
-          <span className="font-data-mono text-[11px] text-surface-variant ml-4 uppercase tracking-widest">Transaction & Performance Log</span>
+          <span className="font-data-mono text-[11px] text-surface-variant ms-4 uppercase tracking-widest">Transaction & Performance Log</span>
         </div>
         <Icon name="terminal" className="text-surface-variant text-[18px]" />
       </div>
@@ -124,7 +128,7 @@ const PositionRow = ({ market, category, platform, side, sideColor, entry, prob,
       <td className="px-4 py-4">
         <span className={`${sideColor} px-2 py-0.5 rounded text-[11px] font-bold`}>{side}</span>
       </td>
-      <td className="px-4 py-4 text-right font-data-mono">{entry}</td>
+      <td className="px-4 py-4 text-end font-data-mono">{entry}</td>
       <td className="px-4 py-4">
         {prob === null ? (
           <div className="text-center font-data-mono text-outline">—</div>
@@ -136,18 +140,18 @@ const PositionRow = ({ market, category, platform, side, sideColor, entry, prob,
             </div>
             <div className="h-1 bg-outline-variant rounded-full overflow-hidden relative">
               <div 
-                className={`h-full absolute left-0 top-0 ${side === 'YES' ? 'bg-secondary' : 'bg-tertiary'}`} 
+                className={`h-full absolute start-0 top-0 ${side === 'YES' ? 'bg-secondary' : 'bg-tertiary'}`} 
                 style={{ width: `${prob}%` }}
               ></div>
             </div>
           </div>
         )}
       </td>
-      <td className="px-4 py-4 text-right font-data-mono">
+      <td className="px-4 py-4 text-end font-data-mono">
         <div>{size}</div>
         <div className="text-[10px] text-outline">Backend record</div>
       </td>
-      <td className="px-4 py-4 text-right font-data-mono">
+      <td className="px-4 py-4 text-end font-data-mono">
         <div className="font-semibold text-on-surface">{exitValue}</div>
         {exitSubLabel && <div className="text-[10px] text-outline">{exitSubLabel}</div>}
         {cappedWarning && (
@@ -159,7 +163,7 @@ const PositionRow = ({ market, category, platform, side, sideColor, entry, prob,
           </span>
         )}
       </td>
-      <td className="px-4 py-4 text-right font-data-mono">
+      <td className="px-4 py-4 text-end font-data-mono">
         <div className={`${pnlColor} font-bold`}>{pnl}</div>
         <div className={`text-[11px] ${pnlColor === 'text-secondary' ? 'text-secondary-container bg-on-secondary-fixed-variant' : 'text-tertiary-container bg-error-container'} px-1 rounded inline-block`}>
           {pnlPercent}
@@ -171,7 +175,7 @@ const PositionRow = ({ market, category, platform, side, sideColor, entry, prob,
           {status}
         </span>
       </td>
-      <td className="px-6 py-4 text-right space-x-2">
+      <td className="px-6 py-4 text-end space-x-2">
         {claimable ? (
           <button 
             className="bg-secondary text-primary-foreground px-3 py-1 rounded font-label-caps text-[10px] uppercase shadow-sm active:scale-95 transition-transform"
@@ -216,8 +220,10 @@ export default function PortfolioPage() {
     basis: rawTreasuryValuation.mode,
     setBasis: rawTreasuryValuation.setMode,
   };
-  const { viewed, isWatching, setWatch, clearWatch } = useViewedAddress();
+  const { viewed, isWatching, pendingWatch, confirmPendingWatch, dismissPendingWatch, setWatch, clearWatch } = useViewedAddress();
   const [watchInput, setWatchInput] = useState("");
+  const [validatedWatch, setValidatedWatch] = useState<PolicyCheckedAddress | null>(null);
+  const known = knownAddresses(wallet.address);
   const activeHolder = viewed ?? wallet.address;
   const addressPositions = useAddressPositions(activeHolder);
   const myPositions = useMyPositions();
@@ -385,29 +391,72 @@ export default function PortfolioPage() {
           )}
         </div>
 
+        {/* External ?watch= interstitial */}
+        {pendingWatch && (
+          <div
+            role="region"
+            aria-label="Confirm watched address"
+            className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-2"
+          >
+            <p className="text-xs font-bold text-on-surface">
+              This link asks to watch a Stellar address:
+            </p>
+            <div className="text-xs">
+              <AddressText address={pendingWatch} />
+            </div>
+            {classify(pendingWatch, known, { expect: "any" }).some((f) => f.kind === "lookalike") && (
+              <p className="text-xs font-bold text-error">
+                Warning: this address looks similar to a known counterparty.
+              </p>
+            )}
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={confirmPendingWatch}
+                className="bg-primary text-primary-foreground px-3 py-1.5 rounded text-xs font-bold"
+              >
+                View
+              </button>
+              <button
+                type="button"
+                onClick={dismissPendingWatch}
+                className="border border-outline-variant bg-white px-3 py-1.5 rounded text-xs font-medium"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Address Input & Quick Picks */}
         <div className="bg-surface-container-low border border-outline-variant rounded-xl p-4 mb-4">
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              const trimmed = watchInput.trim();
-              if (!trimmed) return;
-              if (setWatch(trimmed)) {
+              if (!validatedWatch) return;
+              if (setWatch(validatedWatch, { internal: true })) {
                 setWatchInput("");
+                setValidatedWatch(null);
               }
             }}
-            className="flex flex-col sm:flex-row gap-2 mb-3"
+            className="flex flex-col sm:flex-row items-start gap-2 mb-3"
           >
-            <input
-              type="text"
-              placeholder="Watch an address (G... or C...)"
-              value={watchInput}
-              onChange={(e) => setWatchInput(e.target.value)}
-              className="flex-1 bg-white border border-outline-variant rounded-lg px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-primary"
-            />
+            <div className="flex-1 w-full">
+              <AddressInput
+                value={watchInput}
+                onChange={setWatchInput}
+                onValidated={setValidatedWatch}
+                policy="watch"
+                expect="any"
+                known={known}
+                placeholder="Watch an address (G... or C...)"
+                ariaLabel="Watch an address"
+              />
+            </div>
             <button
               type="submit"
-              className="bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-bold font-label-caps hover:brightness-110 transition-all shrink-0"
+              disabled={!validatedWatch}
+              className="bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-bold font-label-caps hover:brightness-110 transition-all shrink-0 disabled:opacity-50"
             >
               Watch
             </button>
@@ -417,7 +466,7 @@ export default function PortfolioPage() {
             {wallet.isConnected && wallet.address && (
               <button
                 type="button"
-                onClick={() => { if (wallet.address) setWatch(wallet.address); }}
+                onClick={() => { if (wallet.address) setWatch(wallet.address, { internal: true }); }}
                 className={`px-2.5 py-1 rounded border text-xs transition-colors ${
                   activeHolder === wallet.address && !isWatching
                     ? "bg-primary text-primary-foreground border-primary font-bold"
@@ -710,20 +759,20 @@ export default function PortfolioPage() {
         </div>
         <div className="overflow-x-auto">
           <table
-            className="w-full border-collapse text-left min-w-[1000px]"
+            className="w-full border-collapse text-start min-w-[1000px]"
             aria-rowcount={positions.length > 0 ? positions.length + 1 : undefined}
           >
             <thead>
               <tr aria-rowindex={1} className="bg-surface font-label-caps text-label-caps text-outline border-b border-outline-variant">
                 <th className="px-6 py-4 font-semibold">MARKET</th>
                 <th className="px-4 py-4 font-semibold">SIDE</th>
-                <th className="px-4 py-4 font-semibold text-right">ENTRY</th>
+                <th className="px-4 py-4 font-semibold text-end">ENTRY</th>
                 <th className="px-4 py-4 font-semibold text-center">PROBABILITY</th>
-                <th className="px-4 py-4 font-semibold text-right">SIZE (BACKEND RECORD)</th>
-                <th className="px-4 py-4 font-semibold text-right">EXIT VALUE (ON-CHAIN)</th>
-                <th className="px-4 py-4 font-semibold text-right">PNL (BACKEND RECORD)</th>
+                <th className="px-4 py-4 font-semibold text-end">SIZE (BACKEND RECORD)</th>
+                <th className="px-4 py-4 font-semibold text-end">EXIT VALUE (ON-CHAIN)</th>
+                <th className="px-4 py-4 font-semibold text-end">PNL (BACKEND RECORD)</th>
                 <th className="px-4 py-4 font-semibold text-center">STATUS</th>
-                <th className="px-6 py-4 font-semibold text-right">ACTIONS</th>
+                <th className="px-6 py-4 font-semibold text-end">ACTIONS</th>
               </tr>
             </thead>
             {isPositionsLoading ? (
@@ -774,7 +823,7 @@ export default function PortfolioPage() {
                     if (val.liquidation.capped && valEntry) {
                       const soldShares = val.liquidation.sold.yes + val.liquidation.sold.no;
                       const heldShares = valEntry.holding.yes + valEntry.holding.no;
-                      cappedWarning = `Only ${formatUsdc(soldShares, { maxDecimals: 2, grouping: true })} of ${formatUsdc(heldShares, { maxDecimals: 2, grouping: true })} shares sellable`;
+                      cappedWarning = `Only ${formatUsdc(soldShares, { maxDecimals: 2, grouping: true })} of ${formatUsdc(heldShares, { maxDecimals: 2, grouping: true })} shares sellable. Selling the rest would return only ${formatUsdcDisplay(val.liquidation.tailValue)} more`;
                     }
                   }
 

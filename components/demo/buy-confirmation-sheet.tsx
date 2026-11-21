@@ -112,7 +112,7 @@ export function BuyConfirmationSheet({
               onChange={onAmountChange ? (e) => onAmountChange(e.target.value) : undefined}
               readOnly={!onAmountChange}
             />
-            <span className="absolute right-4 top-1/2 -translate-y-1/2 font-label-caps text-label-caps text-on-surface-variant">
+            <span className="absolute end-4 top-1/2 -translate-y-1/2 font-label-caps text-label-caps text-on-surface-variant">
               USDC
             </span>
           </div>
@@ -123,7 +123,7 @@ export function BuyConfirmationSheet({
           {details.map((row) => (
             <div key={row.label} className="flex justify-between items-center text-sm sm:text-base">
               <span className="font-body-md text-on-surface-variant">{row.label}</span>
-              <span className="text-right">
+              <span className="text-end">
                 <span className={`font-data-mono font-bold ${row.emphasis ? "text-secondary" : "text-on-surface"}`}>
                   {row.value}
                 </span>

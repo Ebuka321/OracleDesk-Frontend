@@ -108,7 +108,7 @@ export function AgentProfileCard({ profile }: AgentProfileCardProps) {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
           })}
-          <span className="text-on-surface-variant text-sm ml-2">USDC</span>
+          <span className="text-on-surface-variant text-sm ms-2">USDC</span>
         </div>
       </div>
 
@@ -139,7 +139,7 @@ export function AgentProfileCard({ profile }: AgentProfileCardProps) {
                     {new Date(trace.createdAt).toLocaleDateString()}
                   </p>
                 </div>
-                <div className="text-right">
+                <div className="text-end">
                   <div className="font-data-mono text-on-surface text-sm font-bold">
                     {(trace.probabilityEstimate * 100).toFixed(1)}%
                   </div>

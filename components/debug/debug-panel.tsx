@@ -99,15 +99,15 @@ export default function DebugPanel({ initialTab, onClose }: { initialTab: DebugT
   ];
 
   return (
-    <aside className="fixed bottom-4 right-4 z-[200] w-[min(640px,calc(100vw-2rem))] max-h-[70vh] flex flex-col bg-surface-container-lowest text-on-surface border border-outline-variant rounded-lg shadow-xl text-xs" aria-label="Debug panel">
+    <aside className="fixed bottom-4 end-4 z-[200] w-[min(640px,calc(100vw-2rem))] max-h-[70vh] flex flex-col bg-surface-container-lowest text-on-surface border border-outline-variant rounded-lg shadow-xl text-xs" aria-label="Debug panel">
       <header className="flex items-center gap-1 border-b border-outline-variant p-2 flex-wrap">
-        <strong className="mr-2">Debug</strong>
+        <strong className="me-2">Debug</strong>
         {TABS.map((t) => (
           <button key={t} type="button" onClick={() => setTab(t)} className={`px-2 py-0.5 rounded ${tab === t ? "bg-primary text-white" : "hover:bg-surface-container"}`}>
             {t}
           </button>
         ))}
-        <button type="button" onClick={onClose} className="ml-auto px-2" aria-label="Close debug panel">✕</button>
+        <button type="button" onClick={onClose} className="ms-auto px-2" aria-label="Close debug panel">✕</button>
       </header>
 
       <div className="overflow-auto p-2 flex-1 font-data-mono">

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "0001-0001",
+    "ledger": 1005,
+    "ledgerClosedAt": "2026-10-18T12:00:00Z",
+    "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "name": "PriceResolution",
+    "data": { "market_id": "7", "outcome": "Yes", "price": "6500000" }
+  },
+  {
+    "id": "0002-0001",
+    "ledger": 1006,
+    "ledgerClosedAt": "2026-10-18T12:01:00Z",
+    "txHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "name": "ResolutionProposed",
+    "data": { "market_id": "7", "outcome": "No", "proposed_at": "1760788860" }
+  }
+]

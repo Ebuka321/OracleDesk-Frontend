@@ -14,6 +14,9 @@ Report privately, not in a public issue:
 - [GitHub Security Advisories](../../security/advisories/new) for this
   repository, or
 - email **SECURITY-CONTACT-TBD@example.invalid**
+
+See [docs/threat-model.md](docs/threat-model.md) (in progress) for
+attacker profiles, trust boundaries, and known mitigation gaps.
   <!-- TODO(maintainer): replace with the real private disclosure address. -->
 
 <!-- TODO(maintainer): state a triage/response timeline once you have one. -->

@@ -313,3 +313,12 @@ Inspect any public Stellar address's positions and portfolio without connecting 
    - [ ] Click **Stop watching** (in banner or wallet dropdown):
      - The watch state clears, URL parameter is stripped, and the UI immediately switches to displaying Wallet A's own positions and balances.
 
+## Stuck markets, resolution deadlines & fallback (#236)
+
+1. Open `/markets/quick-view?onChainId=<closed-unresolved-market>`.
+2. Confirm the **Resolution Deadline (Ledger Time)** card shows the deadline (`close_time + 30 days`), countdown with ledger uncertainty (`± n s`), and (for hybrid markets) the fallback-open time.
+3. For a market within 7 days of the deadline, verify the approaching-deadline warning appears and an inbox `deadline-near` item is created for held markets.
+4. Once `resolution_deadline` passes (and ledger time uncertainty no longer overlaps), verify the **Expire market** button appears only if simulation succeeds, and the confirmation dialog explains the simulated effect (void vs resolve) and exact payout via `settleValue`.
+5. Confirm and sign: verify queries invalidate and **Redeem now** appears.
+
+

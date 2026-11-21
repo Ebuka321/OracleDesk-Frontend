@@ -1,5 +1,6 @@
 import type { ChainEvent } from "@/lib/stellar/events";
 import { BPS, seedReserves } from "@/lib/stellar/generated/fpmm";
+import { midValue } from "./valuation";
 
 export type LedgerEntry =
   | { kind: "buy" | "sell"; time: number; marketId: string; outcome: "Yes" | "No"; collateral: bigint; shares: bigint; txHash: string }
@@ -38,20 +39,24 @@ export function toLedger(events: ChainEvent[], wallet: string): LedgerEntry[] {
   return entries.sort((a, b) => a.time - b.time);
 }
 
+export type PriceOrReserves =
+  | bigint
+  | { reserveYes: bigint; reserveNo: bigint; yesBps?: bigint };
+
 /**
  * Replays the ledger over the union of entry times and sampleTimes.
- * Mark value floors per side (conservative). When priceAt returns null for a
- * market with open shares, the last known price is reused and the point is
- * flagged partial; with no known price the market contributes 0.
+ * Mark value uses exact reserves when present (via midValue), falling back to bps.
+ * When priceAt returns null for a market with open shares, the last known price
+ * is reused and the point is flagged partial; with no known price the market contributes 0.
  */
 export function equitySeries(
   ledger: LedgerEntry[],
-  priceAt: (marketId: string, time: number) => bigint | null,
+  priceAt: (marketId: string, time: number) => PriceOrReserves | null,
   sampleTimes: number[],
 ): EquityPoint[] {
   const times = [...new Set([...ledger.map(entry => entry.time), ...sampleTimes])].sort((a, b) => a - b);
   const holdings = new Map<string, Holdings>();
-  const lastPrice = new Map<string, bigint>();
+  const lastPrice = new Map<string, PriceOrReserves>();
   let cashFlow = 0n;
   let index = 0;
   const points: EquityPoint[] = [];
@@ -78,7 +83,12 @@ export function equitySeries(
       } else {
         lastPrice.set(marketId, price);
       }
-      markValue += (held.yes * price) / BPS + (held.no * (BPS - price)) / BPS;
+      if (typeof price === "object" && price !== null && "reserveYes" in price && "reserveNo" in price) {
+        markValue += midValue(price.reserveYes, price.reserveNo, held.yes, held.no);
+      } else {
+        const bps = typeof price === "bigint" ? price : price.yesBps ?? 0n;
+        markValue += (held.yes * bps) / BPS + (held.no * (BPS - bps)) / BPS;
+      }
     }
     points.push({ time, cashFlow, markValue, equity: cashFlow + markValue, partial });
   }

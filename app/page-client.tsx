@@ -28,7 +28,7 @@ const AgentActivityRow = React.memo(function AgentActivityRow({ event }: { event
     details: `Trace #${event.payload.onChainTraceId} (${event.payload.action})`, chain: "Stellar", color: "text-primary-fixed",
   };
 
-  return <div className="flex gap-4 border-l border-white/10 pl-4 py-1 hover:bg-white/5 transition-colors group">
+  return <div className="flex gap-4 border-s border-white/10 ps-4 py-1 hover:bg-white/5 transition-colors group">
           <span className="text-white/20 whitespace-nowrap">[{item.time}]{item.receipt && " received"}</span>
           <span className="text-primary font-bold whitespace-nowrap">{item.agent}</span>
           <span className={`font-black ${item.color} whitespace-nowrap`}>{item.action}</span>
@@ -73,7 +73,7 @@ const ProtocolActivity = () => {
       <div className="flex items-center gap-2 mb-6 text-on-surface">
         <Icon name="hub" className="text-primary" />
         <h3 className="font-headline-sm text-headline-sm uppercase tracking-tight text-sm">Protocol Activity</h3>
-        <DemoBadge className="ml-auto" />
+        <DemoBadge className="ms-auto" />
       </div>
       <div className="space-y-4 flex-grow">
         {activity.map((item, i) => (
@@ -104,7 +104,7 @@ const Ticker = () => {
   return (
     <div className="bg-on-background text-primary-fixed-dim py-2 border-b border-outline overflow-hidden">
       <div className="ticker-wrap w-full">
-        <div className="ticker-content realtime-ticker animate-ticker motion-reduce:animate-none font-data-mono text-data-mono uppercase flex gap-8 whitespace-nowrap">
+        <div className="ticker-content realtime-ticker animate-ticker rtl:animate-ticker-rtl motion-reduce:animate-none font-data-mono text-data-mono uppercase flex gap-8 whitespace-nowrap">
           {[...tickerItemsList, ...tickerItemsList, ...tickerItemsList].map((item, i) => (
             <span key={`${i}:${item}`} className={i >= tickerItemsList.length ? "motion-reduce:hidden" : ""}>{item} •</span>
           ))}
@@ -226,8 +226,8 @@ const Hero = () => {
               </div>
             )}
           </motion.div>
-          <div className="absolute -top-10 -right-10 -z-10 w-64 h-64 bg-primary-fixed-dim/20 rounded-full blur-3xl"></div>
-          <div className="absolute -bottom-10 -left-10 -z-10 w-64 h-64 bg-secondary-fixed/20 rounded-full blur-3xl"></div>
+          <div className="absolute -top-10 -end-10 -z-10 w-64 h-64 bg-primary-fixed-dim/20 rounded-full blur-3xl"></div>
+          <div className="absolute -bottom-10 -start-10 -z-10 w-64 h-64 bg-secondary-fixed/20 rounded-full blur-3xl"></div>
         </div>
       </div>
     </section>

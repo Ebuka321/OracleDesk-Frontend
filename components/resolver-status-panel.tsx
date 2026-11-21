@@ -8,18 +8,34 @@ import {
   verifyResolutionCommitment,
   type ResolutionVerificationResult,
 } from "@/lib/stellar/resolution-spec";
-import { formatHashHex } from "@/lib/stellar/market-question";
+import { ResolutionDeadlineCard } from "@/components/market/resolution-deadline-card";
+
+const SourceTag = ({ source }: { source: "chain" | "backend" }) => (
+  <span
+    title={source === "chain" ? "Read live from the market contract" : "OracleDesk backend estimate; may lag the chain"}
+    className={`ms-1 text-[9px] font-bold uppercase px-1 rounded ${
+      source === "chain"
+        ? "bg-secondary-container text-on-secondary-container"
+        : "bg-surface-container-highest text-on-surface-variant"
+    }`}
+  >
+    {source}
+  </span>
+);
 
 export interface ResolverStatusPanelProps {
-  /**
-   * The resolver state machine on-chain:
-   * e.g., "Unconfigured", "SignersPending", "Finalized", "Expired", "Disputed".
-   */
-  resolverState: string;
-  /**
-   * The revealed resolution spec payload from the backend.
-   * If null/undefined, the spec has not yet been revealed.
-   */
+  onChainMarketId?: bigint | string | null;
+  resolverState?:
+    | "Unconfigured"
+    | "SignersPending"
+    | "Finalized"
+    | "Expired"
+    | "Disputed"
+    | "HybridPricePending"
+    | "HybridFallbackOpen"
+    | string;
+  marketStatus?: string;
+  resolutionHash?: Buffer | Uint8Array | string | null;
   resolutionSpec?: ResolutionSpec | null;
   /**
    * The resolution_hash committed on-chain in the market-core/resolver contract.
@@ -33,7 +49,10 @@ export interface ResolverStatusPanelProps {
 }
 
 export function ResolverStatusPanel({
-  resolverState,
+  onChainMarketId,
+  resolverState = "Unconfigured",
+  marketStatus,
+  resolutionHash,
   resolutionSpec,
   resolutionHash,
   marketStatus,
@@ -59,52 +78,23 @@ export function ResolverStatusPanel({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full p-4 flex items-center justify-between text-left hover:bg-surface-container-low transition-colors"
-        aria-expanded={isOpen}
+        className="w-full p-4 flex items-center justify-between bg-surface-container-low hover:bg-surface-container transition-colors text-start"
       >
-        <div className="flex items-center gap-3">
-          <Icon name="verified_user" className="text-secondary text-lg" />
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-headline-sm text-sm font-bold text-on-surface">
-                Resolver Rule Integrity
-              </span>
-              {/* Badge based on verification state */}
-              {verification?.status === "verified" ? (
-                <span className="bg-secondary/10 text-secondary border border-secondary/20 px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase flex items-center gap-1">
-                  <Icon name="check_circle" filled className="text-[12px]" />
-                  Verified Spec
-                </span>
-              ) : verification?.status === "mismatch" ? (
-                <span className="bg-error/15 text-error border border-error px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase flex items-center gap-1">
-                  <Icon name="error" className="text-[12px]" />
-                  Spec Mismatch
-                </span>
-              ) : verification?.status === "unsupported" ? (
-                <span className="bg-surface-container-high text-on-surface-variant border border-outline-variant px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase flex items-center gap-1">
-                  <Icon name="help_outline" className="text-[12px]" />
-                  Verification Unsupported
-                </span>
-              ) : verification?.status === "unconfigured" ? (
-                <span className="bg-surface-container text-on-surface-variant border border-outline-variant/60 px-2 py-0.5 rounded text-[10px] font-medium tracking-wider uppercase">
-                  No Commitment
-                </span>
-              ) : (
-                <span className="bg-surface-container text-on-surface-variant border border-outline-variant/60 px-2 py-0.5 rounded text-[10px] font-medium tracking-wider uppercase">
-                  Unrevealed
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-on-surface-variant mt-0.5">
-              {verification?.status === "verified"
-                ? "Revealed resolution rule strictly matches the on-chain SHA-256 commitment."
-                : verification?.status === "mismatch"
-                  ? "CRITICAL: The revealed rule does NOT match the committed hash on-chain!"
-                  : verification?.status === "unsupported"
-                    ? "Specialized rule kind (e.g. Committee/Hybrid): hash verification is not supported in the web client."
-                    : "Resolution commitment check details and plain-language rule interpretation."}
-            </p>
-          </div>
+        <div className="flex items-center gap-2">
+          <Icon name="policy" className="text-primary text-base" />
+          <h3 className="font-headline-sm text-headline-sm text-on-surface">Market Resolution & Commitment</h3>
+          {verification?.status === "verified" && (
+            <span className="ms-2 inline-flex items-center gap-1 text-[10px] font-bold text-secondary bg-secondary/10 px-2 py-0.5 rounded border border-secondary/20">
+              <Icon name="verified" filled className="text-[13px]" />
+              Commitment Verified
+            </span>
+          )}
+          {verification?.status === "mismatch" && (
+            <span className="ms-2 inline-flex items-center gap-1 text-[10px] font-bold text-error bg-error/15 px-2 py-0.5 rounded border border-error animate-pulse">
+              <Icon name="error" className="text-[13px]" />
+              Spec Hash Mismatch
+            </span>
+          )}
         </div>
 
         <Icon name={isOpen ? "expand_less" : "expand_more"} className="text-on-surface-variant text-sm" />
@@ -135,6 +125,8 @@ export function ResolverStatusPanel({
               </div>
             )}
           </div>
+
+          <ResolutionDeadlineCard onChainMarketId={onChainMarketId} />
 
           {/* Revealed Spec in Plain Words */}
           <div className="p-4 bg-surface-container-lowest rounded-lg border border-outline-variant">

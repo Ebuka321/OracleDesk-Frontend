@@ -7,6 +7,7 @@ import {
   allocateRedemptionPayout,
   deserializePnl,
   replay,
+  replayWithRealizations,
   seedCostBasis,
   serializePnl,
   totals,
@@ -262,19 +263,33 @@ describe("lib/portfolio/pnl", () => {
         }
       }
 
-      const m = replay(events).get("m1")!;
+      const { markets, realizations } = replayWithRealizations(events);
+      const m = markets.get("m1")!;
       expect(m.yes.cost).toBeGreaterThanOrEqual(0n);
       expect(m.no.cost).toBeGreaterThanOrEqual(0n);
       if (m.yes.shares === 0n) expect(m.yes.cost).toBe(0n);
       if (m.no.shares === 0n) expect(m.no.cost).toBe(0n);
 
-      // Reconciliation: realized + remaining cost == cashOut - cashIn + cashIn == cashOut - (cashIn - remainingCost)
-      // Specifically: cashOut - realized === cashIn - remainingCost (both equal total cost removed)
-      expect(m.yes.realized + m.yes.cost).toBe(cashOutYes - cashInYes + cashInYes);
+      // Reconciliation invariants:
+      // cashOut - realized === cashIn - cost (both sides equal total cost removed)
       expect(cashOutYes - m.yes.realized).toBe(cashInYes - m.yes.cost);
       expect(cashOutNo - m.no.realized).toBe(cashInNo - m.no.cost);
       expect(m.yes.fees).toBe(feesYes);
       expect(m.no.fees).toBe(feesNo);
+
+      // Σ costRemoved === cashIn - cost per leg
+      const yesCostRemoved = realizations.filter((r) => r.marketId === "m1" && r.outcome === "Yes").reduce((sum, r) => sum + r.costRemoved, 0n);
+      const noCostRemoved = realizations.filter((r) => r.marketId === "m1" && r.outcome === "No").reduce((sum, r) => sum + r.costRemoved, 0n);
+      expect(yesCostRemoved).toBe(cashInYes - m.yes.cost);
+      expect(noCostRemoved).toBe(cashInNo - m.no.cost);
+
+      // realized === cashOut - Σ costRemoved
+      expect(m.yes.realized).toBe(cashOutYes - yesCostRemoved);
+      expect(m.no.realized).toBe(cashOutNo - noCostRemoved);
+
+      // Zero-drift flat exits: when shares === 0n, realized === cashOut - cashIn exactly
+      if (m.yes.shares === 0n) expect(m.yes.realized).toBe(cashOutYes - cashInYes);
+      if (m.no.shares === 0n) expect(m.no.realized).toBe(cashOutNo - cashInNo);
     }
   });
 

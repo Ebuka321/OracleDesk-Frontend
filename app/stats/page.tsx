@@ -71,7 +71,7 @@ const VolumeChart = () => {
           <path d="M0 180 Q 50 170, 100 150 T 200 120 T 300 140 T 400 90 T 500 110 T 600 60 T 700 80 T 800 40 L 800 200 L 0 200 Z" fill="rgba(0, 70, 85, 0.05)"></path>
           <path d="M0 180 Q 50 170, 100 150 T 200 120 T 300 140 T 400 90 T 500 110 T 600 60 T 700 80 T 800 40" fill="none" stroke="#004655" strokeWidth="2" vectorEffect="non-scaling-stroke"></path>
         </svg>
-        <div className="absolute left-2 top-2 bottom-2 flex flex-col justify-between font-label-caps text-[10px] text-outline">
+        <div className="absolute start-2 top-2 bottom-2 flex flex-col justify-between font-label-caps text-[10px] text-outline">
           <span>200M</span>
           <span>150M</span>
           <span>100M</span>
@@ -114,7 +114,7 @@ const TopTrades = () => {
                 <p className="text-[11px] text-on-surface-variant">Builder: {trade.builder}</p>
               </div>
             </div>
-            <div className="text-right">
+            <div className="text-end">
               <p className="font-data-mono text-data-mono text-secondary">{trade.volume}</p>
               <p className="text-[11px] text-on-surface-variant">{trade.copies} copies</p>
             </div>
@@ -193,7 +193,7 @@ const LiveTerminal = () => {
         </div>
         <span className="text-white/30 text-[9px]">v4.2.1-STABLE</span>
       </div>
-      <div className="flex-1 space-y-2 overflow-y-auto custom-scrollbar pr-2">
+      <div className="flex-1 space-y-2 overflow-y-auto custom-scrollbar pe-2">
         {logs.map((log, i) => (
           <div key={i} className="flex gap-3 animate-in fade-in slide-in-from-left duration-500">
             <span className="text-white/20 whitespace-nowrap">[{log.time}]</span>

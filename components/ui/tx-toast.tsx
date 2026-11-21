@@ -53,7 +53,7 @@ export function TxToastContainer() {
 
   return (
     <aside
-      className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full px-4 sm:px-0 pointer-events-none"
+      className="fixed bottom-4 end-4 z-50 flex flex-col gap-2 max-w-sm w-full px-4 sm:px-0 pointer-events-none"
       role="status"
       aria-live="polite"
       aria-label="Transaction Notifications"

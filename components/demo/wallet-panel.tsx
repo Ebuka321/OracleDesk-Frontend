@@ -73,7 +73,7 @@ export function WalletPanel({
                 </div>
                 <span className="font-medium text-on-surface">{balance.symbol}</span>
               </div>
-              <div className="text-right">
+              <div className="text-end">
                 <div className="font-data-mono text-on-surface text-sm sm:text-base">{balance.amount}</div>
                 {balance.fiat && <div className="text-[10px] text-on-surface-variant font-label-caps">{balance.fiat}</div>}
               </div>

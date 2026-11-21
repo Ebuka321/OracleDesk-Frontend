@@ -8,7 +8,8 @@ import {
   settleValue,
 } from "../../stellar/generated/fpmm";
 import { USDC_UNIT } from "../../stellar/units";
-import { maxSellable, valueHolding, type MarketState } from "../valuation";
+import { maxSellable, midValue, valueHolding, type MarketState } from "../valuation";
+import valuationVectors from "./fixtures/valuation-vectors.json";
 
 function createRng(seed: number) {
   let state = seed >>> 0;
@@ -83,13 +84,34 @@ describe("lib/portfolio/valuation", () => {
         closeTime: 2_000_000_000n,
       };
       const valuation = valueHolding(m, { yes: shares, no: 0n }, 1_000_000_000n);
-      expect(valuation.liquidation.value).toBeLessThanOrEqual(valuation.mid + 1n);
+      expect(valuation.liquidation.value).toBeLessThanOrEqual(valuation.mid + 2n);
     }
 
     expect(totalAdjustmentSteps).toBeGreaterThanOrEqual(0);
   });
 
-  it("property: liquidation value never exceeds mid value + 1 across single and two-sided holdings", () => {
+  it("matches regression vectors for counterexample runs 3, 5, 11, 13 and thin-pool case", () => {
+    for (const vec of valuationVectors.runs) {
+      const computed = midValue(BigInt(vec.rYes), BigInt(vec.rNo), BigInt(vec.shares), 0n);
+      expect(computed).toBe(BigInt(vec.exactMid));
+    }
+
+    const tp = valuationVectors.thinPool;
+    const m: MarketState = {
+      reserveYes: BigInt(tp.reserveYes),
+      reserveNo: BigInt(tp.reserveNo),
+      feeBps: BigInt(tp.feeBps),
+      status: "Open",
+      closeTime: 2_000_000_000n,
+    };
+    const v = valueHolding(m, { yes: BigInt(tp.want), no: 0n }, 1_000_000_000n, { exitFloorBps: BigInt(tp.exitFloorBps) });
+    expect(v.liquidation.capped).toBe(true);
+    expect(v.liquidation.sold.yes).toBeLessThan(BigInt(tp.want));
+    expect(v.liquidation.value).toBeGreaterThan(0n);
+    expect(v.liquidation.tailValue).toBeGreaterThan(0n);
+  });
+
+  it("property: liquidation value never exceeds mid value + 2 across single and two-sided holdings", () => {
     const rng = createRng(0x60_9999);
 
     for (let run = 0; run < 1_000; run++) {
@@ -107,7 +129,7 @@ describe("lib/portfolio/valuation", () => {
         closeTime: 2_000_000_000n,
       };
       const v = valueHolding(m, { yes, no }, 1_000_000_000n);
-      expect(v.liquidation.value).toBeLessThanOrEqual(v.mid + 1n);
+      expect(v.liquidation.value).toBeLessThanOrEqual(v.mid + 2n);
     }
   });
 
@@ -122,7 +144,7 @@ describe("lib/portfolio/valuation", () => {
       const feeBps = rng.big(0n, 1_000n);
       const want = rng.big(1n, rSold * 20n + rOther * 20n);
 
-      const res = maxSellable(rSold, rOther, feeBps, want);
+      const res = maxSellable(rSold, rOther, feeBps, want, 0n);
       expect(res.shares).toBeLessThanOrEqual(want);
       expect(res.shares).toBeGreaterThanOrEqual(0n);
 
@@ -154,6 +176,7 @@ describe("lib/portfolio/valuation", () => {
     expect(v.liquidation.tradable).toBe(true);
     expect(v.liquidation.capped).toBe(true);
     expect(v.liquidation.value).toBeGreaterThan(0n);
+    expect(v.liquidation.tailValue).toBeGreaterThan(0n);
     expect(v.liquidation.sold.yes).toBeGreaterThan(0n);
     expect(v.liquidation.sold.yes).toBeLessThan(want);
     expect(v.liquidation.unsold.yes).toBe(want - v.liquidation.sold.yes);

@@ -33,7 +33,8 @@ export type MarketCoreEvent =
   | { kind: "MarketCreated"; marketId: bigint; creator: string; closeTime: bigint; seedAmount: bigint; initialYesBps: number }
   | { kind: "Trade"; marketId: bigint; trader: string; outcome: OutcomeTag; isBuy: boolean; collateral: bigint; shares: bigint; fee: bigint; reserveYes: bigint; reserveNo: bigint }
   | { kind: "MarketResolved"; marketId: bigint; outcome: "Yes" | "No" | null }
-  | { kind: "Redeemed"; marketId: bigint; holder: string; payout: bigint };
+  | { kind: "Redeemed"; marketId: bigint; holder: string; payout: bigint }
+  | { kind: "FeesSwept"; marketId: bigint; recipient: string; amount: bigint };
 
 export interface EventMeta { id: string; ledger: number; ledgerClosedAt: string; txHash: string }
 export type DecodedEvent = MarketCoreEvent & { meta: EventMeta };
@@ -71,6 +72,9 @@ export function decodeMarketCoreEvent(event: rpc.Api.EventResponse): DecodedEven
     case "Redeemed":
       if (!isBig(d.market_id) || typeof d.holder !== "string" || !isBig(d.payout)) return null;
       return { kind: "Redeemed", marketId: d.market_id, holder: d.holder, payout: d.payout, meta };
+    case "FeesSwept":
+      if (!isBig(d.market_id) || typeof d.recipient !== "string" || !isBig(d.amount)) return null;
+      return { kind: "FeesSwept", marketId: d.market_id, recipient: d.recipient, amount: d.amount, meta };
     default:
       return null;
   }

@@ -24,22 +24,22 @@ export function RpcPanel() {
     <div className="overflow-x-auto">
       <table className="w-full text-[11px] font-data-mono">
         <thead>
-          <tr className="text-left text-outline">
-            <th className="pr-2">Endpoint</th><th className="pr-2">State</th><th className="pr-2">p50</th><th className="pr-2">p95</th>
-            <th className="pr-2">Err</th><th className="pr-2">429</th><th className="pr-2">Ledger</th><th className="pr-2">Lag</th><th />
+          <tr className="text-start text-outline">
+            <th className="pe-2">Endpoint</th><th className="pe-2">State</th><th className="pe-2">p50</th><th className="pe-2">p95</th>
+            <th className="pe-2">Err</th><th className="pe-2">429</th><th className="pe-2">Ledger</th><th className="pe-2">Lag</th><th />
           </tr>
         </thead>
         <tbody>
           {stats.map((s) => (
             <tr key={s.url} title={s.lastError}>
-              <td className="pr-2 break-all">{s.url}</td>
-              <td className="pr-2">{s.state}</td>
-              <td className="pr-2">{ms(s.p50Ms)}</td>
-              <td className="pr-2">{ms(s.p95Ms)}</td>
-              <td className="pr-2">{Math.round(s.errorRate * 100)}%</td>
-              <td className="pr-2">{s.rateLimited}</td>
-              <td className="pr-2">{s.latestLedger ?? "–"}</td>
-              <td className="pr-2">{s.lagLedgers ?? "–"}</td>
+              <td className="pe-2 break-all">{s.url}</td>
+              <td className="pe-2">{s.state}</td>
+              <td className="pe-2">{ms(s.p50Ms)}</td>
+              <td className="pe-2">{ms(s.p95Ms)}</td>
+              <td className="pe-2">{Math.round(s.errorRate * 100)}%</td>
+              <td className="pe-2">{s.rateLimited}</td>
+              <td className="pe-2">{s.latestLedger ?? "–"}</td>
+              <td className="pe-2">{s.lagLedgers ?? "–"}</td>
               <td>{s.url === pinned ? "pinned" : s.url === current ? "current" : ""}</td>
             </tr>
           ))}

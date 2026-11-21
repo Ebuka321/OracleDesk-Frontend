@@ -11,7 +11,7 @@ export function NetworkConsistencyBanner() {
       {rpcNetwork.status === "mismatch"
         ? `The RPC server is on a different network from ${NETWORK_LABEL}. Chain reads and signing are disabled. Contact the operator to correct the RPC configuration.`
         : "Couldn't reach the Stellar network. Check your connection and retry."}
-      <button type="button" onClick={() => void retryRpcNetwork()} className="ml-3 underline">Retry network check</button>
+      <button type="button" onClick={() => void retryRpcNetwork()} className="ms-3 underline">Retry network check</button>
     </div>
   );
 }

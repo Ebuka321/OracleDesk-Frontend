@@ -89,7 +89,7 @@ export default function MarketTerminal() {
               alt="Institutional Terminal Interface"
             />
           </div>
-          <div className="absolute -bottom-4 -left-0 md:-left-8 bg-white/80 backdrop-blur-md p-4 rounded shadow-xl border border-outline-variant flex items-center gap-3">
+          <div className="absolute -bottom-4 -start-0 md:-start-8 bg-white/80 backdrop-blur-md p-4 rounded shadow-xl border border-outline-variant flex items-center gap-3">
             <div className="w-10 h-10 bg-secondary rounded-full flex items-center justify-center text-white">
               <Icon name="trending_up" />
             </div>
@@ -172,12 +172,12 @@ export default function MarketTerminal() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full text-start border-collapse">
             <thead>
               <tr className="bg-surface-container-lowest border-b border-outline-variant uppercase text-[10px] tracking-widest font-bold">
                 <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps">Market Name</th>
-                <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps text-right">Probability</th>
-                <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps text-right">Volume (24h)</th>
+                <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps text-end">Probability</th>
+                <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps text-end">Volume (24h)</th>
                 <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps text-center">Trend</th>
                 <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps">Action</th>
               </tr>
@@ -196,7 +196,7 @@ export default function MarketTerminal() {
                     <span className="font-semibold text-on-surface">{m.name}</span>
                   </td>
                   <td className={`px-6 py-4 text-right font-data-mono font-bold text-${m.color}`}>{m.prob}</td>
-                  <td className="px-6 py-4 text-right font-data-mono text-on-surface-variant">{m.vol}</td>
+                  <td className="px-6 py-4 text-end font-data-mono text-on-surface-variant">{m.vol}</td>
                   <td className="px-6 py-4">
                     <div className="flex justify-center">
                       <div className="h-3 w-24 bg-surface-container-high rounded-full overflow-hidden flex items-center px-0.5 border border-outline-variant/30">

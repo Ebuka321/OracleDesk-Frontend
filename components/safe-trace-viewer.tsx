@@ -235,8 +235,8 @@ export function SafeTraceViewer({
               >
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <span className="font-body-md font-semibold text-on-surface truncate pr-2">
-                      <SafeText text={source.name} />
+                    <span className="font-body-md font-semibold text-on-surface truncate pe-2">
+                      {source.name}
                     </span>
                     <span className="font-data-mono text-xs font-bold text-primary">
                       {Math.round(source.weight * 100)}%
@@ -303,7 +303,7 @@ export function SafeTraceViewer({
           <button
             type="button"
             onClick={() => setShowRaw(!showRaw)}
-            className="w-full flex items-center justify-between text-left font-label-caps text-xs text-on-surface-variant hover:text-on-surface transition-colors"
+            className="w-full flex items-center justify-between text-start font-label-caps text-xs text-on-surface-variant hover:text-on-surface transition-colors"
           >
             <span>ADDITIONAL RAW FIELDS ({Object.keys(data.rawUnknownFields).length})</span>
             <Icon name={showRaw ? "expand_less" : "expand_more"} className="text-sm" />

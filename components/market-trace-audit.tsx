@@ -259,11 +259,11 @@ export function MarketTraceAudit({
       {summary && (
         <div className="px-6 py-3 bg-surface-container-low border-b border-outline-variant flex flex-wrap items-center justify-between text-xs text-on-surface-variant gap-4 font-data-mono">
           <div>
-            <span className="font-bold uppercase tracking-wider text-outline mr-2">TIME SPAN:</span>
+            <span className="font-bold uppercase tracking-wider text-outline me-2">TIME SPAN:</span>
             {summary.timeSpan.formatted}
           </div>
           <div>
-            <span className="font-bold uppercase tracking-wider text-outline mr-2">AGENTS:</span>
+            <span className="font-bold uppercase tracking-wider text-outline me-2">AGENTS:</span>
             {summary.agentsInvolved.map((a) => `${a.slice(0, 4)}…${a.slice(-4)}`).join(", ") || "None"}
           </div>
         </div>
@@ -318,7 +318,7 @@ export function MarketTraceAudit({
       {/* Traces Table */}
       {filteredItems.length > 0 ? (
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs font-data-mono">
+          <table className="w-full text-start text-xs font-data-mono">
             <thead>
               <tr className="border-b border-outline-variant bg-surface-container-low text-on-surface-variant">
                 <th className="px-4 py-3 font-normal">#</th>
@@ -328,7 +328,7 @@ export function MarketTraceAudit({
                 <th className="px-4 py-3 font-normal">Published</th>
                 <th className="px-4 py-3 font-normal">Status</th>
                 <th className="px-4 py-3 font-normal">Backend Agreement</th>
-                <th className="px-4 py-3 font-normal text-right">Actions</th>
+                <th className="px-4 py-3 font-normal text-end">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/60">
@@ -391,7 +391,7 @@ export function MarketTraceAudit({
                       </div>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-end">
                     {item.content ? (
                       <button
                         type="button"

@@ -126,13 +126,13 @@ export function CalibrationChart({ groups }: CalibrationChartProps) {
           View reliability table
         </summary>
         <div className="overflow-x-auto mt-2">
-          <table className="w-full text-left font-data-mono text-data-mono text-xs">
+          <table className="w-full text-start font-data-mono text-data-mono text-xs">
             <thead>
               <tr className="border-b border-outline-variant text-on-surface uppercase">
-                <th className="py-2 pr-4">Agent</th>
-                <th className="py-2 pr-4">Bin</th>
-                <th className="py-2 pr-4">n</th>
-                <th className="py-2 pr-4">Mean forecast</th>
+                <th className="py-2 pe-4">Agent</th>
+                <th className="py-2 pe-4">Bin</th>
+                <th className="py-2 pe-4">n</th>
+                <th className="py-2 pe-4">Mean forecast</th>
                 <th className="py-2">Observed frequency</th>
               </tr>
             </thead>
@@ -142,12 +142,12 @@ export function CalibrationChart({ groups }: CalibrationChartProps) {
                   .filter((bin) => bin.n > 0)
                   .map((bin) => (
                     <tr key={`${group}-${bin.lo}`} className="border-b border-outline-variant last:border-0">
-                      <td className="py-1.5 pr-4 text-on-surface">{agentLabel(group)}</td>
-                      <td className="py-1.5 pr-4 text-on-surface-variant">
+                      <td className="py-1.5 pe-4 text-on-surface">{agentLabel(group)}</td>
+                      <td className="py-1.5 pe-4 text-on-surface-variant">
                         {bin.lo.toFixed(2)} – {bin.hi.toFixed(2)}
                       </td>
-                      <td className="py-1.5 pr-4 text-on-surface-variant">{bin.n}</td>
-                      <td className="py-1.5 pr-4 text-on-surface-variant">{bin.meanP.toFixed(3)}</td>
+                      <td className="py-1.5 pe-4 text-on-surface-variant">{bin.n}</td>
+                      <td className="py-1.5 pe-4 text-on-surface-variant">{bin.meanP.toFixed(3)}</td>
                       <td className="py-1.5 text-on-surface-variant">{bin.freq.toFixed(3)}</td>
                     </tr>
                   )),

@@ -251,7 +251,7 @@ function UnlockPremiumTraceContent() {
                   {Math.round(trace.probabilityEstimate * 100)}% · {new Date(trace.createdAt).toLocaleDateString()}
                 </p>
               </div>
-              <div className="text-right">
+              <div className="text-end">
                 <span
                   className={`inline-block px-3 py-1 rounded-full font-label-caps text-label-caps font-bold ${
                     accessLevel === "DAILY_PASS" || accessLevel === "PER_TRACE"

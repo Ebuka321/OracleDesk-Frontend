@@ -104,7 +104,7 @@ const ReasoningCard = ({ trace, disableEntrance = true }: ReasoningCardProps) =>
           <h2 className="font-headline-sm text-headline-sm text-on-surface mb-1 uppercase tracking-tight">{trace.market?.question ?? "Market Analysis"}</h2>
           <p className="font-body-md text-on-surface-variant italic">&quot;{decisionType}&quot;</p>
         </div>
-        <div className="flex items-center gap-6 md:border-l md:pl-6 border-outline-variant">
+        <div className="flex items-center gap-6 md:border-s md:ps-6 border-outline-variant">
           <div className="text-center">
             <div className="font-label-caps text-[10px] text-outline uppercase mb-1">Confidence</div>
             <div className="font-data-mono text-headline-sm text-primary">{yesProb}%</div>

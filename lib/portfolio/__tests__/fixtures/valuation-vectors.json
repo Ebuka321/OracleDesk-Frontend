@@ -1,0 +1,47 @@
+{
+  "runs": [
+    {
+      "run": 3,
+      "rYes": "668349347704000",
+      "rNo": "668349347704",
+      "feeBps": "661",
+      "shares": "146974994301",
+      "exactMid": "146828166",
+      "oldFlooredMid": "132277494"
+    },
+    {
+      "run": 5,
+      "rYes": "33380520843000000",
+      "rNo": "333805208430",
+      "feeBps": "650",
+      "shares": "53607284163",
+      "exactMid": "536067",
+      "oldFlooredMid": "0"
+    },
+    {
+      "run": 11,
+      "rYes": "8300320127860000",
+      "rNo": "830032012786",
+      "feeBps": "277",
+      "shares": "243599478075",
+      "exactMid": "24357512",
+      "oldFlooredMid": "0"
+    },
+    {
+      "run": 13,
+      "rYes": "21521401662000000",
+      "rNo": "21521401662",
+      "feeBps": "824",
+      "shares": "3625908235",
+      "exactMid": "3625",
+      "oldFlooredMid": "0"
+    }
+  ],
+  "thinPool": {
+    "reserveYes": "10000000000",
+    "reserveNo": "100000000",
+    "feeBps": "100",
+    "want": "500000000000",
+    "exitFloorBps": "100"
+  }
+}

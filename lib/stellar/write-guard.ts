@@ -16,6 +16,7 @@ export interface WriteGuardContext {
   accountFunded?: boolean;
   updatePending?: boolean;
   integrity?: Record<string, IntegrityResult> | null;
+  monitorStatus?: MonitorStatus;
   target?: ContractKey | "usdc";
   requires?: readonly Capability[];
 }
@@ -56,6 +57,29 @@ export function assertCanWrite(ctx: WriteGuardContext): SignerAddress {
       message: "You're viewing another address. Connect your own wallet to trade.",
     });
   }
+
+  if (ctx.monitorStatus === "initial" || ctx.monitorStatus === "rechecking") {
+    throw new UserFacingError({
+      kind: "contract",
+      message: "Verifying contracts… try again in a moment.",
+    });
+  }
+
+  if (ctx.monitorStatus === "failed") {
+    throw new UserFacingError({
+      kind: "contract",
+      message: "This app is out of date with the deployed contracts. Trading is disabled until it's updated.",
+    });
+  }
+
+  // Blocking on mainnet for unchecked RPC status; allowed with warning on testnet
+  if (ctx.monitorStatus === "unchecked" && NETWORK_PASSPHRASE !== TESTNET_PASSPHRASE) {
+    throw new UserFacingError({
+      kind: "contract",
+      message: "Contract integrity could not be verified due to RPC connectivity issues. Signing disabled on mainnet.",
+    });
+  }
+
   if (ctx.integrity && ctx.target) {
     const res = ctx.integrity[ctx.target];
     if (res && (res.status === "mismatch" || res.status === "not-found" || res.status === "wrong-kind")) {

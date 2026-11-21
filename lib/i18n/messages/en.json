@@ -76,7 +76,9 @@
         "DisputeWindowOpen": "The dispute window is still open.",
         "NoProposal": "There's no resolution proposal for this market yet.",
         "AlreadyFinalized": "This market has already been finalized.",
-        "SpecHashMismatch": "That resolution rule doesn't match what this market committed to."
+        "SpecHashMismatch": "That resolution rule doesn't match what this market committed to.",
+        "DeadlineNotReached": "The resolution grace period has not elapsed yet.",
+        "ResolutionAvailable": "A quorum resolution proposal is already available to finalize."
       },
       "reasoningRegistry": {
         "NotInitialized": "This contract hasn't been initialized yet.",

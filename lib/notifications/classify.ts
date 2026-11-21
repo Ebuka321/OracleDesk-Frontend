@@ -2,7 +2,8 @@ import { NETWORK_PASSPHRASE } from "@/lib/stellar/config";
 import type { Position } from "@/lib/stellar/generated/market-core";
 import type { ChainEvent } from "@/lib/stellar/events";
 import type { TrackedTx } from "@/lib/stellar/tx-tracker-core";
-import { isTradeEvent, isTraceEvent, isPassExpiringEvent, isRaw, isHash } from "@/lib/realtime/types";
+import { isTradeEvent, isTraceEvent, isRaw, isHash } from "@/lib/realtime/types";
+import { phaseAt, RESOLUTION_GRACE_SECS } from "@/lib/stellar/resolution-deadline";
 import type { InboxItem } from "./store";
 
 const base = (owner: string, kind: InboxItem["kind"], id: string, createdAt: number): InboxItem => ({ owner, network: NETWORK_PASSPHRASE, kind, id: `${kind}:${id}`, createdAt, readAt: null, data: {} });
@@ -40,14 +41,40 @@ export function classifyTracked(tx: TrackedTx, owner: string): InboxItem | null 
   return { ...base(owner, kind, tx.hash, tx.submittedAt), txHash: tx.hash, marketId: tx.marketId, ledger: tx.ledger,
     data: { action: tx.kind, message: tx.error?.message ?? (tx.state === "expired" ? "Transaction expired" : "Awaiting confirmation") } };
 }
-export function classifyPassExpiring(payload: unknown, owner: string, receivedAt = Date.now()): InboxItem | null {
-  if (!isPassExpiringEvent(payload)) return null;
-  const id = payload.passId ? `${payload.passId}:${payload.expiresAt}` : payload.expiresAt;
+
+/**
+ * Classifies a held, open, past-close_time market for resolution deadline warnings.
+ * Uses `id = "deadline:<kind>:<marketId>"` so each market emits at most one item per kind.
+ */
+export function classifyDeadline(
+  marketId: string,
+  closeTime: bigint,
+  ledgerNow: bigint,
+  owner: string,
+  position: Position,
+  uncertaintySecs = 0n,
+): InboxItem | null {
+  if (position.yes + position.no <= 0n) return null;
+  const resolutionDeadline = closeTime + RESOLUTION_GRACE_SECS;
+  const phase = phaseAt(
+    { closeTime, resolutionDeadline, fallbackOpensAt: null, resolverState: "Unconfigured" },
+    ledgerNow,
+    undefined,
+    uncertaintySecs,
+  );
+  if (phase !== "deadline-near" && phase !== "expirable") return null;
+  const kind = phase === "expirable" ? "deadline-passed" : "deadline-near";
   return {
-    ...base(owner, "pass-expiring", id, receivedAt),
+    owner,
+    network: NETWORK_PASSPHRASE,
+    kind,
+    id: `deadline:${kind}:${marketId}`,
+    marketId,
+    createdAt: Number(ledgerNow) * 1000,
+    readAt: null,
     data: {
-      expiresAt: payload.expiresAt,
-      ...(payload.remainingMinutes !== undefined ? { remainingMinutes: String(payload.remainingMinutes) } : {}),
+      closeTime: closeTime.toString(),
+      resolutionDeadline: resolutionDeadline.toString(),
     },
   };
 }

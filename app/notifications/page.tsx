@@ -55,14 +55,8 @@ export default function NotificationsPage() {
         {inbox.status === "loading" && <div role="status" className="p-6 bg-surface-container-low motion-safe:animate-pulse">Loading your inbox…</div>}
         {inbox.status !== "loading" && items.length === 0 && <p className="p-8 border border-dashed border-outline-variant rounded-lg text-sm text-on-surface-variant">No {filter === "all" ? "notifications" : labels[filter].toLowerCase()} yet. Your wallet&apos;s next activity will appear here.</p>}
         {items.map(item => <article key={item.id} className={`border rounded-lg p-4 ${item.readAt === null ? "border-primary bg-surface-container-lowest" : "border-outline-variant bg-surface"}`}>
-          <div className="flex flex-wrap justify-between gap-2">
-            <h2 className="font-bold text-sm">
-              <SafeText text={title[item.kind]} />
-              {item.readAt === null && <span className="text-primary text-xs ml-2">Unread</span>}
-            </h2>
-            <time dateTime={new Date(item.createdAt).toISOString()} className="text-xs text-on-surface-variant">{new Date(item.createdAt).toLocaleString()}</time>
-          </div>
-          <div className="text-sm mt-2"><SafeText text={message(item)} as="p" /></div>
+          <div className="flex flex-wrap justify-between gap-2"><h2 className="font-bold text-sm">{title[item.kind]}{item.readAt === null && <span className="text-primary text-xs ms-2">Unread</span>}</h2><time dateTime={new Date(item.createdAt).toISOString()} className="text-xs text-on-surface-variant">{new Date(item.createdAt).toLocaleString()}</time></div>
+          <p className="text-sm mt-2">{message(item)}</p>
           <div className="flex flex-wrap gap-4 mt-3 text-xs text-primary">
             {item.marketId && <Link className="underline" href={`/markets/quick-view?onChainId=${encodeURIComponent(item.marketId)}`}>View market #{item.marketId}</Link>}
             {item.kind === "trace" && item.data.traceId && <Link className="underline" href={`/reasoning/detail?traceId=${encodeURIComponent(item.data.traceId)}`}>Read reasoning</Link>}

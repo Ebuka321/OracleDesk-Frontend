@@ -50,7 +50,7 @@ const Navbar = () => {
                         {item.label}
                         <Icon name="expand_more" className="text-[18px] transition-transform duration-200 group-data-[state=open]:rotate-180" />
                       </NM.Trigger>
-                      <NM.Content className="absolute top-full left-0 mt-0 w-48 bg-white border border-outline-variant shadow-lg py-2 rounded-md z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:animate-none">
+                      <NM.Content className="absolute top-full start-0 mt-0 w-48 bg-white border border-outline-variant shadow-lg py-2 rounded-md z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:animate-none">
                         <ul className="flex flex-col list-none m-0 p-0">
                           {item.children.map((subItem) => {
                             const isExact = currentHref === subItem.href;
@@ -112,7 +112,7 @@ const Navbar = () => {
               <Icon name="notifications" />
             </span>
             {unread > 0 && (
-              <span aria-hidden="true" className="absolute top-0 right-0 w-2 h-2 bg-tertiary rounded-full" />
+              <span aria-hidden="true" className="absolute top-0 end-0 w-2 h-2 bg-tertiary rounded-full" />
             )}
           </Link>
           

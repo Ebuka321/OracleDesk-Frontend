@@ -176,7 +176,7 @@ function ReasoningTraceDetailContent() {
                 <span className="font-label-caps text-on-surface-variant">CURRENT PRICE</span>
                 <div className="font-headline-md text-headline-md font-bold">0.68¢</div>
               </div>
-              <div className="text-right">
+              <div className="text-end">
                 <span className="font-label-caps text-secondary">POTENTIAL ROI</span>
                 <div className="font-headline-md text-headline-md font-bold text-secondary">
                   +47.1%
