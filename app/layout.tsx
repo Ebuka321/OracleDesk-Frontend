@@ -18,8 +18,7 @@ import { ViewedAddressProvider } from "@/lib/hooks/useViewedAddress";
 import { IntegrityBanner } from "@/components/layout/IntegrityBanner";
 import { ViewingBanner } from "@/components/layout/ViewingBanner";
 import { WebVitals } from "@/app/web-vitals";
-import { ErrorReportingInit } from "@/components/observability/ErrorReportingInit";
-import { ConsentBanner } from "@/components/consent-banner";
+import { CommandPalette } from "@/components/command-palette/CommandPalette";
 
 const geistSans = Geist({
   subsets: ["latin"],
@@ -97,6 +96,7 @@ export default function RootLayout({
                   </div>
                   <Footer />
                   <DebugMount />
+                  <CommandPalette />
                   <WebVitals />
                 </InboxProvider>
               </HealthProvider>
