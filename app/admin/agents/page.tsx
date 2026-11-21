@@ -11,7 +11,7 @@ import { useAdminPermissions } from "@/lib/admin/useAdminPermissions";
 import { describeError } from "@/lib/stellar/errors";
 import { AddressInput } from "@/components/ui/address-input";
 import { knownAddresses } from "@/lib/stellar/address-book";
-import type { PolicyCheckedAddress } from "@/lib/stellar/address-policy";
+import { asPolicyCheckedAddress, type PolicyCheckedAddress } from "@/lib/stellar/address-policy";
 
 const SOURCE_LABELS: Record<AgentSource, string> = {
   "event:registered": "AgentRegistered event",
@@ -351,7 +351,7 @@ function AdminAgentsContent() {
                           <button
                             type="button"
                             disabled={notAdmin || reviewing || busy}
-                            onClick={() => void startReview(row.registered === true ? "unregister" : "register", row.address)}
+                            onClick={() => void startReview(row.registered === true ? "unregister" : "register", asPolicyCheckedAddress(row.address))}
                             className="text-xs underline text-primary disabled:opacity-40 disabled:no-underline"
                           >
                             {row.registered === true ? "Unregister" : "Register"}

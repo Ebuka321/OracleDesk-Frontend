@@ -1,9 +1,9 @@
 import React from "react";
 import { describe, expect, it } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { SafeText } from "../../safe-text";
-import { QuestionVerificationBadge } from "../../question-verification-badge";
-import { SafeTraceViewer } from "../../safe-trace-viewer";
+import { SafeText } from "../safe-text";
+import { QuestionVerificationBadge } from "../question-verification-badge";
+import { SafeTraceViewer } from "../safe-trace-viewer";
 
 describe("SafeText Component", () => {
   it("renders plain safe text with no warnings", () => {

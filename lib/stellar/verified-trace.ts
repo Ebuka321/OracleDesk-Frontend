@@ -25,7 +25,7 @@ export async function fetchVerifiedTrace(onChainTraceId: bigint | string, signal
     onChainTraceId: String(onChainTraceId),
     marketId: trace.market_id.toString(),
     agent: trace.agent,
-    action: trace.action,
+    action: typeof trace.action === "string" ? trace.action : ((trace.action as any)?.tag ?? JSON.stringify(trace.action)),
     ipfsCid: trace.ipfs_cid,
     onChainHash,
     publishedAt: Number(trace.published_at),

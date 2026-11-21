@@ -8,31 +8,7 @@ import { buildCsp } from "./lib/security/csp";
  * Uses commit SHA (or NEXT_PUBLIC_BUILD_ID/BUILD_ID env) with safe local fallback.
  */
 function resolveBuildId(): string {
-  if (process.env.NEXT_PUBLIC_BUILD_ID?.trim()) {
-    return process.env.NEXT_PUBLIC_BUILD_ID.trim();
-  }
-  if (process.env.BUILD_ID?.trim()) {
-    return process.env.BUILD_ID.trim();
-  }
-  try {
-    const gitSha = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
-    if (gitSha && /^[0-9a-f]{40}$/.test(gitSha)) {
-      return gitSha;
-    }
-  } catch {
-    // git not available or not in repo
-  }
-  return "deterministic-static-build-id";
-}
-
-const DETERMINISTIC_BUILD_ID = resolveBuildId();
-
-/**
- * Deterministic build id: single source of truth across the page,
- * the service worker URL, and the precache manifest (.next/BUILD_ID).
- */
-function resolveBuildId(): string {
-  const explicit = process.env.NEXT_PUBLIC_BUILD_ID?.trim();
+  const explicit = process.env.NEXT_PUBLIC_BUILD_ID?.trim() || process.env.BUILD_ID?.trim();
   if (explicit && /^[A-Za-z0-9_-]+$/.test(explicit)) return explicit;
   const sha = (
     process.env.NEXT_PUBLIC_BUILD_SHA ||
@@ -48,14 +24,14 @@ function resolveBuildId(): string {
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8",
     }).trim();
-    if (gitSha && /^[A-Za-z0-9_-]+$/.test(gitSha)) return gitSha;
+    if (gitSha && /^[0-9a-f]{7,40}$/i.test(gitSha)) return gitSha;
   } catch {
     // Git unavailable; fall through
   }
-  return "build-" + (process.env.NODE_ENV === "production" ? "prod" : "dev");
+  return "deterministic-static-build-id";
 }
 
-const deterministicBuildId = resolveBuildId();
+const DETERMINISTIC_BUILD_ID = resolveBuildId();
 
 const isDev = process.env.NODE_ENV !== "production";
 const reportUri = process.env.NEXT_PUBLIC_CSP_REPORT_URL?.trim() || "";
@@ -89,10 +65,6 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  generateBuildId: async () => deterministicBuildId,
-  env: {
-    NEXT_PUBLIC_BUILD_ID: deterministicBuildId,
-  },
   /**
    * Static export mode for reproducible content-addressed static builds.
    */

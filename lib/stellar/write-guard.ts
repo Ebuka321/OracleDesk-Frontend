@@ -1,9 +1,10 @@
 import { UserFacingError } from "./errors";
 import type { Signer } from "./clients";
-import { NETWORK_LABEL } from "./config";
+import { NETWORK_LABEL, NETWORK_PASSPHRASE, TESTNET_PASSPHRASE } from "./config";
 import { asSignerAddress, type SignerAddress } from "./identity";
 import type { IntegrityResult, ContractKey } from "./contract-check";
 import { CAPABILITIES, type Capability } from "./capability-registry";
+import type { MonitorStatus } from "./integrity-monitor";
 
 export interface WriteGuardContext {
   signer: Signer | null;
