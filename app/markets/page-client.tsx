@@ -24,6 +24,9 @@ import { SourceTag } from "@/components/ui/source-tag";
 import { ProbabilityBar } from "@/components/ui/probability-bar";
 import { useProvisionalPrice } from "@/lib/realtime/RealtimeProvider";
 import { reconcileDisplayPrice } from "@/lib/realtime/market-price-store";
+import { useBreaker } from "@/lib/hooks/useBreaker";
+import { breakerLimits } from "@/lib/stellar/breaker";
+import { bpsToPercent } from "@/lib/stellar/units";
 
 function chainStatusLabel(view: OnChainMarketView | undefined): string {
   if (!view) return "—";
@@ -110,6 +113,9 @@ const MarketCard = ({ href, category, onChainMarketId, reasoningTraces, expiry, 
   const reduceMotion = useReducedMotion();
   const shouldAnimate = !disableEntrance && !reduceMotion;
   const chain = useOnChainMarket(onChainMarketId);
+  const breakerState = useBreaker(onChainMarketId ?? "", Boolean(onChainMarketId));
+  const breaker = breakerLimits(breakerState.data?.config);
+  const breakerEnabled = breaker.impactBps > 0n || breaker.bandBps > 0n;
   const view = chain.data;
   const fromChain = Boolean(view);
   const provisional = useProvisionalPrice(onChainMarketId);
@@ -207,6 +213,14 @@ const MarketCard = ({ href, category, onChainMarketId, reasoningTraces, expiry, 
                 {chain.isLoading ? "…" : volume24h}
               </p>
             </div>
+            {breakerEnabled && (
+              <div className="col-span-2">
+                <p className="text-label-caps text-on-surface-variant uppercase mb-1">Price breakers</p>
+                <p className="font-data-mono text-body-md">
+                  Impact ≤ {bpsToPercent(breaker.impactBps, 0)} · Band ≤ {bpsToPercent(breaker.bandBps, 0)}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -51,6 +51,15 @@ export interface SpecIndex {
 
 export type Compat = { ok: true } | { ok: false; reason: string };
 
+/** True when the deployed spec exposes every named market-core function. */
+export function marketCoreSupports(
+  entries: readonly xdr.ScSpecEntry[],
+  fnNames: readonly string[],
+): boolean {
+  const index = indexSpec(entries);
+  return fnNames.every((name) => index.fns.has(name));
+}
+
 function armOf(obj: unknown): string {
   if (!obj) return "";
   const o = obj as { arm?: () => string; switch?: () => { name?: string } };
