@@ -10,7 +10,6 @@ import {
   storeAuthSession,
   isAuthError,
   replaceToken,
-  ApiError,
   type ApiRequestOptions,
 } from "./client";
 import { validateSEP10Challenge, type SEP10ValidationError } from "@/lib/stellar/sep10-validator";
@@ -19,7 +18,7 @@ import { TransactionBuilder } from "@stellar/stellar-sdk";
 import { NETWORK_PASSPHRASE } from "@/lib/stellar/config";
 import { NetworkMismatchError } from "@/lib/stellar/network-check";
 import { sha256Hex } from "@/lib/stellar/trace";
-import { withOperation } from "@/lib/observability/tracing";
+import { withOperation, type TraceCtx } from "@/lib/observability/tracing";
 import { AuthChallengeSchema } from "./schemas";
 import { solvePow } from "@/lib/auth/pow-runner";
 import { baseAccountOf } from "@/lib/auth/pow";
@@ -173,17 +172,16 @@ export async function verifyChallenge(
   address: string,
   signed: string,
   isCurrent: () => boolean = () => true,
-  trace?: Parameters<typeof apiClient.post>[3] extends { trace?: infer T } ? T : undefined,
+  trace?: TraceCtx,
   extraHeaders?: Record<string, string>,
 ) {
-  const headers = {
-    ...(SESSION_MODE === "cookie" ? { "X-Session-Mode": "cookie" } : {}),
-    ...(extraHeaders ?? {}),
-  };
   const { data } = await apiClient.post<AuthSession>(
     "/auth/verify",
     { address, signed },
-    Object.keys(headers).length > 0 ? headers : undefined,
+    {
+      ...(SESSION_MODE === "cookie" ? { "X-Session-Mode": "cookie" } : {}),
+      ...extraHeaders,
+    },
     { trace },
   );
   if (!isCurrent() || data.walletAddress !== address) throw new Error("Your account changed; sign in again.");
@@ -323,16 +321,8 @@ export async function signInWithWallet(
 ): Promise<AuthSession> {
   // Serialize logout → sign-in so a late logout response cannot clear the new cookie.
   await pendingLogout.catch(() => undefined);
-  return withOperation("auth.signInWithWallet", async (trace) => {
-    opts.onStep?.("challenge");
-    const challenge = await requestChallenge(address, {
-      signal: opts.signal,
-      trace,
-      onPow: (p) => {
-        opts.onStep?.("pow");
-        opts.onPow?.(p);
-      },
-    });
+  return withOperation("sign-in", async (trace) => {
+    const challenge = await requestChallenge(address, { trace });
 
     if (challenge.networkPassphrase !== NETWORK_PASSPHRASE) {
       throw new NetworkMismatchError(NETWORK_PASSPHRASE, challenge.networkPassphrase);

@@ -2,6 +2,7 @@ import type { UserScope } from "@/lib/query/scope";
 import { API_URL } from "@/lib/stellar/config";
 import { API_ERROR_CODES, type ApiCode, type ApiErrorCode } from "@/lib/errors/codes";
 import { messageFor } from "@/lib/errors/messages";
+import { currentTrace, newTrace, toTraceparent, type TraceCtx } from "@/lib/observability/tracing";
 
 export { API_URL };
 
@@ -12,6 +13,11 @@ export interface ApiRequestOptions {
   /** Internal flag to prevent infinite loops when retrying after step-up auth. */
   _stepUpRetried?: boolean;
 }
+/** Structural match for a zod schema, so this module does not import zod itself. */
+export interface ResponseSchema<T> {
+  safeParse(value: unknown): { success: true; data: T } | { success: false; error: { issues: readonly { path: readonly PropertyKey[]; message: string }[] } };
+}
+type SchemaOptions<T> = ApiRequestOptions & { schema?: ResponseSchema<T> };
 const sessionListeners = new Set<() => void>();
 const authInvalidListeners = new Set<() => void>();
 export function onAuthSessionChanged(listener: () => void) {
@@ -36,6 +42,8 @@ export function notifyAuthInvalid(expectedSessionId?: string | null, expectedTok
   clearAuthSession();
   authInvalidListeners.forEach((listener) => listener());
   return true;
+}
+
 export type StepUpPromptHandler = (details: { maxAgeSeconds?: number; reauthenticate?: boolean }) => Promise<boolean>;
 let stepUpHandler: StepUpPromptHandler | null = null;
 
@@ -394,7 +402,8 @@ async function request<T>(
   assertScope();
 
   if (!response.ok || envelope?.ok === false) {
-    const isStepUp = response.status === 403 && (apiError?.code === "STEP_UP_REQUIRED" || (apiError?.details as any)?.reauthenticate === true);
+    const details = apiError?.details as { reauthenticate?: boolean } | undefined;
+    const isStepUp = response.status === 403 && (apiError?.code === "STEP_UP_REQUIRED" || details?.reauthenticate === true);
     if (isStepUp && !options._stepUpRetried && stepUpHandler) {
       const stepUpDetails = (apiError?.details as { maxAgeSeconds?: number; reauthenticate?: boolean }) ?? { reauthenticate: true };
       const confirmed = await stepUpHandler(stepUpDetails);

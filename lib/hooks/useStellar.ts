@@ -206,7 +206,7 @@ export async function fetchOnChainMarketBySimulation(id: bigint | string): Promi
   return { id: String(id), market, yesBps: market.reserve_yes + market.reserve_no > 0n ? Number(priceYesBps(market.reserve_yes, market.reserve_no)) : 0, ledger: typeof ledger === "number" ? ledger : null };
 }
 
-const marketBatcher = createMarketBatcher({
+export const marketBatcher = createMarketBatcher({
   server: rpcServer(),
   spec: marketCore().spec,
   fallback: fetchOnChainMarketBySimulation,

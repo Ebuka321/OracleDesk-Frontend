@@ -10,6 +10,7 @@ import { useRealtimeBatch } from "@/lib/realtime/RealtimeProvider";
 import { rpcServer } from "@/lib/stellar/clients";
 import { describeError, UserFacingError } from "@/lib/stellar/errors";
 import type { MarketStatus as ChainStatus } from "@/lib/stellar/generated/market-core";
+import type { DriftClass } from "@/lib/admin/drift";
 
 export interface CountCheck {
   label: string;
@@ -24,6 +25,7 @@ export interface MarketDiff {
   onChainId: string;
   backendId: string | null;
   kind: MarketDiffKind;
+  driftClass?: DriftClass;
   chainValue?: string;
   backendValue?: string;
   deltaBps?: number;
@@ -49,6 +51,13 @@ export function compareStatus(chain: ChainStatus, backend: BackendStatus): boole
   if (chain.tag === "Open") return backend === "ACTIVE" || backend === "RESOLVING";
   if (chain.tag === "Resolved") return backend === "RESOLVED";
   return backend === "CANCELLED";
+}
+
+function statusDriftClass(chain: ChainStatus, backend: BackendStatus): DriftClass {
+  const final = backend === "RESOLVED" || backend === "CANCELLED";
+  if (chain.tag === "Resolved") return final ? "STATUS_REGRESSION" : "MISSED_RESOLUTION";
+  if (chain.tag === "Void") return final ? "STATUS_REGRESSION" : "MISSED_VOID";
+  return final ? "STATUS_REGRESSION" : "CLOSED_BUT_ACTIVE";
 }
 
 export function priceDeltaBps(chainYesBps: number, backendProb: number | null | undefined): number | null {
@@ -217,6 +226,7 @@ export function useMarketSample(opts: MarketSampleOptions): UseQueryResult<Marke
             onChainId: market.onChainMarketId,
             backendId: market.id,
             kind: "missing-chain",
+            driftClass: "NOT_FOUND_ON_CHAIN",
             backendValue: market.status,
             chainValue: "id ≥ market_count()",
           });
@@ -242,6 +252,7 @@ export function useMarketSample(opts: MarketSampleOptions): UseQueryResult<Marke
               onChainId,
               backendId: backendMarket?.id ?? null,
               kind: "missing-chain",
+            driftClass: "NOT_FOUND_ON_CHAIN",
               chainValue: described.code ?? described.message,
             });
             continue;
@@ -263,6 +274,7 @@ export function useMarketSample(opts: MarketSampleOptions): UseQueryResult<Marke
             onChainId,
             backendId: backendMarket.id,
             kind: "status",
+            driftClass: statusDriftClass(view.market.status, backendMarket.status),
             chainValue: CHAIN_STATUS_LABEL(view.market.status),
             backendValue: backendMarket.status,
           });
@@ -274,6 +286,7 @@ export function useMarketSample(opts: MarketSampleOptions): UseQueryResult<Marke
             onChainId,
             backendId: backendMarket.id,
             kind: "price",
+            driftClass: "PRICE_STALE",
             chainValue: `${view.yesBps} bps`,
             backendValue: `${Math.round(backendProb * 10_000)} bps`,
             deltaBps: delta,
