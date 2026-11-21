@@ -858,7 +858,7 @@ export default function PortfolioPage() {
                     if (val.liquidation.capped && valEntry) {
                       const soldShares = val.liquidation.sold.yes + val.liquidation.sold.no;
                       const heldShares = valEntry.holding.yes + valEntry.holding.no;
-                      cappedWarning = `Only ${formatUsdc(soldShares, { maxDecimals: 2, grouping: true })} of ${formatUsdc(heldShares, { maxDecimals: 2, grouping: true })} shares sellable`;
+                      cappedWarning = `Only ${formatUsdc(soldShares, { maxDecimals: 2, grouping: true })} of ${formatUsdc(heldShares, { maxDecimals: 2, grouping: true })} shares sellable. Selling the rest would return only ${formatUsdcDisplay(val.liquidation.tailValue)} more`;
                     }
                   }
 

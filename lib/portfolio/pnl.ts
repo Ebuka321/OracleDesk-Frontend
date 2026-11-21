@@ -1,5 +1,6 @@
 import { BPS, seedReserves, settleValue } from "../stellar/generated/fpmm";
 import { mulDivFloor } from "../stellar/units";
+import { midValue } from "./valuation";
 
 /**
  * Pure bigint cost-basis and PnL replay engine for market-core positions.
@@ -360,8 +361,9 @@ export function replay(events: readonly PnlEvent[]): Map<string, MarketPnl> {
 }
 
 /**
- * Marks a market position to mid (when open) or settlement value (when resolved
- * and not yet redeemed). Floor rounding keeps valuation conservative.
+ * Marks a market position to mid (approximate, using integer basis points)
+ * or settlement value (when resolved and not yet redeemed).
+ * Prefer `unrealizedAtReserves` for exact mark-to-mid spot valuation from pool reserves.
  */
 export function unrealizedAt(
   m: MarketPnl,
@@ -387,13 +389,36 @@ export function unrealizedAt(
 }
 
 /**
+ * Exact mark-to-mid for open positions directly from pool reserves without bps truncation.
+ */
+export function unrealizedAtReserves(
+  m: MarketPnl,
+  reserveYes: bigint,
+  reserveNo: bigint,
+): { value: bigint; unrealized: bigint } {
+  const totalCost = m.yes.cost + m.no.cost;
+  if (m.redeemed || (m.yes.shares === 0n && m.no.shares === 0n && totalCost === 0n)) {
+    return { value: 0n, unrealized: 0n };
+  }
+
+  if (m.resolution !== "Open") {
+    const kind =
+      m.resolution === "Yes" ? "yes" : m.resolution === "No" ? "no" : "void";
+    const value = settleValue(kind, m.yes.shares, m.no.shares);
+    return { value, unrealized: value - totalCost };
+  }
+
+  const value = midValue(reserveYes, reserveNo, m.yes.shares, m.no.shares);
+  return { value, unrealized: value - totalCost };
+}
+
+/**
  * Sums cost basis, realized trading PnL, unrealized PnL, redemption PnL and
- * fees across all markets. Open markets without a price entry in `prices`
- * contribute `0n` to `unrealized`.
+ * fees across all markets. Accepts either a map of bps prices or a map of reserves.
  */
 export function totals(
   ms: Map<string, MarketPnl>,
-  prices: Map<string, bigint>,
+  pricesOrReserves: Map<string, bigint> | Map<string, { reserveYes: bigint; reserveNo: bigint }>,
 ): PnlTotals {
   let cost = 0n;
   let realized = 0n;
@@ -410,9 +435,14 @@ export function totals(
     if (m.resolution !== "Open") {
       unrealized += unrealizedAt(m, 0n).unrealized;
     } else {
-      const price = prices.get(marketId);
-      if (price !== undefined) {
-        unrealized += unrealizedAt(m, price).unrealized;
+      const entry = (pricesOrReserves as Map<string, unknown>).get(marketId);
+      if (entry !== undefined) {
+        if (typeof entry === "bigint") {
+          unrealized += unrealizedAt(m, entry).unrealized;
+        } else if (typeof entry === "object" && entry !== null && "reserveYes" in entry && "reserveNo" in entry) {
+          const res = entry as { reserveYes: bigint; reserveNo: bigint };
+          unrealized += unrealizedAtReserves(m, res.reserveYes, res.reserveNo).unrealized;
+        }
       }
     }
   }

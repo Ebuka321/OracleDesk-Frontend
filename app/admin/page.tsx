@@ -177,6 +177,15 @@ function AdminContent() {
               ROLES &amp; ACCESS
             </Link>
           )}
+          {can("reconciliation.run") && (
+            <Link
+              href="/admin/reconciliation"
+              className="border border-outline text-on-surface px-6 py-4 rounded-lg font-label-caps text-label-caps flex items-center gap-2 hover:bg-surface-container-low transition-all"
+            >
+              <Icon name="find_match" />
+              RECONCILIATION
+            </Link>
+          )}
         </div>
         <Link 
           href="/admin/create" 

@@ -11,14 +11,14 @@ import { PwaRegistrar } from "@/components/pwa/pwa-registrar";
 import { DebugMount } from "@/components/debug/debug-mount";
 import { RpcDegradedBanner } from "@/components/debug/RpcPanel";
 import { NetworkConsistencyBanner } from "@/components/layout/NetworkConsistencyBanner";
+import { IntegrityBanner } from "@/components/layout/IntegrityBanner";
 import { BuildIdentityBanner } from "@/components/layout/BuildIdentityBanner";
 import { CopyTradeReconciler } from "@/components/copy-trade/CopyTradeReconciler";
 import { ViewedAddressProvider } from "@/lib/hooks/useViewedAddress";
-import { DirectionProvider } from "@/components/layout/DirectionProvider";
-import { dirForLocale, type Dir } from "@/lib/i18n/direction";
+import { IntegrityBanner } from "@/components/layout/IntegrityBanner";
+import { ViewingBanner } from "@/components/layout/ViewingBanner";
 import { WebVitals } from "@/app/web-vitals";
-import { ErrorReportingInit } from "@/components/observability/ErrorReportingInit";
-import { ConsentBanner } from "@/components/consent-banner";
+import { CommandPalette } from "@/components/command-palette/CommandPalette";
 
 const geistSans = Geist({
   subsets: ["latin"],
@@ -85,6 +85,10 @@ export default function RootLayout({
               <HealthProvider>
                 <InboxProvider>
                   <Navbar />
+                  <div className="sticky top-0 z-50 flex flex-col">
+                    <IntegrityBanner />
+                    <ViewingBanner />
+                  </div>
                   <NetworkConsistencyBanner />
                   <RpcDegradedBanner />
                   <div id="main-content" tabIndex={-1} className="flex-1 flex flex-col outline-none">
@@ -92,6 +96,7 @@ export default function RootLayout({
                   </div>
                   <Footer />
                   <DebugMount />
+                  <CommandPalette />
                   <WebVitals />
                 </InboxProvider>
               </HealthProvider>

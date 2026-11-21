@@ -131,7 +131,7 @@ export function specSupportsTradeV2(entries: readonly xdr.ScSpecEntry[]): { buyV
   let buyV2 = false;
   let sellV2 = false;
   for (const entry of entries) {
-    const arm = typeof entry.arm === "function" ? entry.arm() : entry.switch().name;
+    const arm = typeof (entry as any).arm === "function" ? (entry as any).arm() : (entry as any).switch?.()?.name;
     if (arm !== "functionV0" && arm !== "scSpecEntryFunctionV0") continue;
     const fn = entry.value() as xdr.ScSpecFunctionV0;
     const name = fn.name().toString();

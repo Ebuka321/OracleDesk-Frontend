@@ -13,6 +13,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     children: [
       { label: "Live Terminal", href: "/markets/terminal" },
       { label: "Active Market Detail", href: "/market" },
+      { label: "FPMM Explainer", href: "/learn/fpmm" },
     ],
   },
   {

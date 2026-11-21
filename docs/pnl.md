@@ -47,7 +47,19 @@ leg.fees     += fee
 leg.sold     += s
 ```
 
-#### Why `mulDivFloor` + Full-Exit Reset Eliminates Rounding Drift
+#### Reconciling Invariants & Rounding Drift
+
+Under average cost accounting:
+- $\text{realized} = \sum (c_i - \text{removed}_i) = \text{cashOut} - \sum \text{removed}_i$
+- $\text{cost} = \text{cashIn} - \sum \text{removed}_i$
+
+Therefore, the invariant that always holds across all states is:
+
+$$\text{cashOut} - \text{realized} = \text{cashIn} - \text{cost} = \sum \text{removed}_i$$
+
+Notice that $\text{realized} + \text{cost} = \text{cashOut} + \text{cashIn} - 2\sum\text{removed}$, which equals $\text{cashOut}$ only by coincidence. When a position is fully closed ($\text{shares} = 0n$), $\text{cost} = 0n$, yielding the flat-exit zero-drift invariant:
+
+$$\text{realized} = \text{cashOut} - \text{cashIn}$$
 
 Flooring `leg.cost * s / leg.shares` leaves any sub-unit rounding remainder inside `leg.cost`. When the final shares of the leg are sold (`s === leg.shares`), `removed` is set to the entire remaining `leg.cost`, resetting `leg.cost` to `0n`.
 
@@ -138,3 +150,32 @@ Suppose a trader trades on Market `#1` (7-decimal base units):
    - `yes.cost = 0n`, `yes.shares = 0n`.
    - `yes.realized = 6_666_667n + (75_000_000n - 66_666_667n) = +15_000_000n`.
    - Total cash out (`40_000_000n + 75_000_000n = 115_000_000n`) minus total cash in (`100_000_000n`) equals `+15_000_000n` to the stroop.
+   - At Step 2: `cashOut - realized = 40_000_000n - 6_666_667n = 33_333_333n`, which exactly matches `cashIn - cost = 100_000_000n - 66_666_667n = 33_333_333n` (both equal the `33_333_333n` cost removed).
+
+---
+
+## 7. Exact Mid from Reserves
+
+Mid value (`shares * spotPrice`) in `valuation.ts`, `pnl.ts` (`unrealizedAtReserves`), and `equity.ts` is computed directly from pool reserves:
+
+$$\text{midValue}(rYes, rNo, y, n) = \left\lfloor \frac{y \cdot rNo}{rYes + rNo} \right\rfloor + \left\lfloor \frac{n \cdot rYes}{rYes + rNo} \right\rfloor$$
+
+Computing mid value by first flooring spot probability to an integer basis point (`priceYesBps`) introduces severe truncation errors when market prices drop below 1%. For example, in property test run 3:
+- Reserves: $rYes = 668,349,347,704,000$, $rNo = 668,349,347,704$ (ratio 1:1000)
+- Holding: $146,974,994,301$ YES shares
+- True spot probability: $9.99$ bps, which `priceYesBps` floored to $9$ bps.
+- The bps-floored mid value was $132,277,494$, while executable liquidation yielded $137,092,736$, wrongly making liquidation exceed mid.
+- With exact `midValue`, the spot value is $146,828,166$, correctly preserving the invariant that liquidation $\le \text{mid} + 2$.
+
+---
+
+## 8. Capped Exits and Liquidity Floors
+
+On a constant-product FPMM, the quadratic root for complete sets burned strictly lies in $(0, rOther)$ for any finite share quantity, so a pool mathematically never "runs out" of counter-reserve liquidity. However, dumping large holdings against a thin counter-reserve causes extreme price slippage and value destruction.
+
+OracleDesk defines `capped` via an explicit exit floor:
+- Configured by `exitFloorBps` in `ValuationOptions` (default `MIN_PROB_BPS = 100n`, or 1%).
+- `maxSellable` finds the maximal $s \le \text{want}$ such that the post-sale spot probability $\frac{newReserveOther}{newReserveSold + newReserveOther} \ge \text{exitFloorBps}$.
+- If $s < \text{want}$, `capped` is set to `true`.
+- The extra proceeds from liquidating the remaining $\text{want} - s$ shares are reported as `tailValue`.
+- In a thin pool (e.g. 1,000 YES / 10 NO reserves, fee 100 bps, selling 50,000 YES), the portfolio UI warns: `"Only X of Y shares sellable. Selling the rest would return only Z USDC more"`.

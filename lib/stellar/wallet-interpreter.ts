@@ -16,7 +16,15 @@ export interface WalletInterpreterDeps {
   storedSessionWallet: () => string | null;
   clearBackendSession: () => void;
   /** Runs the backend challenge login for `address`; resolves with the wallet it signed in as. */
-  signIn: (address: string, signTransaction: WalletKitAdapter["signTransaction"], isCurrent?: () => boolean) => Promise<string>;
+  signIn: (
+    address: string,
+    signTransaction: WalletKitAdapter["signTransaction"],
+    isCurrent?: () => boolean,
+    opts?: {
+      signal?: AbortSignal;
+      onProgress?: (p: { step: "challenge" | "pow" | "sign" | "verify"; powProgress?: number }) => void;
+    },
+  ) => Promise<string>;
   purgeStellarQueries: () => void;
   navigate: (to: string) => void;
   /** Turns a thrown value into a plain message. */
@@ -35,6 +43,7 @@ export class WalletInterpreter {
   /** Bumped on every start and stop, so a late kit load from an old run is ignored. */
   private generation = 0;
   private unsubscribeKit: Array<() => void> = [];
+  private activeSignInAbort: AbortController | null = null;
 
   constructor(private readonly deps: WalletInterpreterDeps) {}
 
@@ -75,6 +84,8 @@ export class WalletInterpreter {
   };
 
   stop = (): void => {
+    this.activeSignInAbort?.abort();
+    this.activeSignInAbort = null;
     this.generation++;
     this.started = false;
     this.unsubscribeKit.forEach((fn) => fn());
@@ -82,6 +93,14 @@ export class WalletInterpreter {
   };
 
   send = (event: WalletEvent): void => {
+    if (
+      event.type === "DISCONNECT_REQUESTED" ||
+      event.type === "KIT_DISCONNECTED" ||
+      event.type === "KIT_STATE_UPDATED"
+    ) {
+      this.activeSignInAbort?.abort();
+      this.activeSignInAbort = null;
+    }
     const next = transition(this.state, event);
     this.state = next.state;
     this.listeners.forEach((fn) => fn());
@@ -213,24 +232,51 @@ export class WalletInterpreter {
           );
         return;
 
-      case "signIn":
+      case "signIn": {
+        this.activeSignInAbort?.abort();
+        const controller = new AbortController();
+        this.activeSignInAbort = controller;
+
         this.deps
-          .signIn(effect.address, (xdr, opts) => this.signTransaction(xdr, opts), () => {
-            const state = this.state;
-            return state.tag === "authenticating" && state.epoch === effect.epoch &&
-              state.attempt === effect.attempt && state.address === effect.address;
-          })
+          .signIn(
+            effect.address,
+            (xdr, opts) => this.signTransaction(xdr, opts),
+            () => {
+              const state = this.state;
+              return (
+                state.tag === "authenticating" &&
+                state.epoch === effect.epoch &&
+                state.attempt === effect.attempt &&
+                state.address === effect.address
+              );
+            },
+            {
+              signal: controller.signal,
+              onProgress: ({ step, powProgress }) => {
+                this.send({
+                  type: "AUTH_PROGRESS",
+                  epoch: effect.epoch,
+                  attempt: effect.attempt,
+                  step,
+                  powProgress,
+                });
+              },
+            },
+          )
           .then(
             (wallet) => this.send({ type: "SIGNIN_SUCCEEDED", epoch: effect.epoch, attempt: effect.attempt, wallet }),
-            (err) =>
+            (err) => {
+              if (controller.signal.aborted) return;
               this.send({
                 type: "SIGNIN_FAILED",
                 epoch: effect.epoch,
                 attempt: effect.attempt,
                 message: this.deps.describe(err).message,
-              }),
+              });
+            },
           );
         return;
+      }
 
       case "clearBackendSession":
         this.deps.clearBackendSession();

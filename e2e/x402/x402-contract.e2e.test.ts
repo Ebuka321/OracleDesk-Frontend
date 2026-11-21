@@ -173,4 +173,19 @@ describe("x402 contract: frontend client ↔ contracts trace service", () => {
     const unexpected = guard.blocked.filter((host) => !KNOWN_REFUSED_PROBES.has(host));
     expect(unexpected, "a request tried to leave 127.0.0.1").toEqual([]);
   });
+
+  it("parallel harnesses bind distinct loopback ports", async () => {
+    const [h1, h2] = await Promise.all([startX402Harness(), startX402Harness()]);
+    try {
+      expect(h1.baseUrl).not.toBe(h2.baseUrl);
+      expect(h1.facilitator.url).not.toBe(h2.facilitator.url);
+    } finally {
+      await Promise.all([h1.close(), h2.close()]);
+    }
+  });
+
+  it("a non-loopback fetch from inside the service is blocked", async () => {
+    await expect(fetch("https://example.invalid/")).rejects.toThrow();
+    expect(guard.blocked).toContain("example.invalid");
+  });
 });

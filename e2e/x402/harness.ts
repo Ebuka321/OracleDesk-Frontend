@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -212,18 +213,34 @@ export function closeServer(server: Server): Promise<void> {
 
 type ServiceModule = typeof import("../../contracts/oracledesk-stellar/x402/trace-api.ts");
 
+function submoduleSha(): string {
+  try {
+    return execFileSync("git", ["-C", "contracts", "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  } catch {
+    return "unknown";
+  }
+}
+
 /** Loads the pinned service module, failing with one actionable message if its API moved. */
 export async function loadTraceService(): Promise<ServiceModule> {
+  const bindingsPath = fileURLToPath(new URL("../../contracts/oracledesk-stellar/packages/bindings/reasoning-registry", import.meta.url));
+  if (!existsSync(bindingsPath)) {
+    throw new Error(
+      `${API_CHANGED} (missing submodule bindings at ${bindingsPath}; contracts@${submoduleSha()}; run: git submodule update --init)`,
+    );
+  }
   let service: Partial<ServiceModule>;
   try {
     service = await import("../../contracts/oracledesk-stellar/x402/trace-api.ts");
   } catch (cause) {
     throw new Error(
-      `${API_CHANGED} (could not import trace-api.ts: ${cause instanceof Error ? cause.message : String(cause)}; ` +
+      `${API_CHANGED} (contracts@${submoduleSha()}; could not import trace-api.ts: ${cause instanceof Error ? cause.message : String(cause)}; ` +
         "did you run npm ci --ignore-scripts --prefix contracts/oracledesk-stellar/x402?)",
     );
   }
-  if (typeof service.createTraceApi !== "function" || typeof service.MapTraceRepository !== "function") throw new Error(API_CHANGED);
+  if (typeof service.createTraceApi !== "function" || typeof service.MapTraceRepository !== "function") {
+    throw new Error(`${API_CHANGED} (contracts@${submoduleSha()})`);
+  }
   return service as ServiceModule;
 }
 

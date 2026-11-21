@@ -18,6 +18,8 @@ export const userKeys = {
   adminRoles: (s: UserScope) => [...scopeKey(s), "admin", "roles"] as const,
   adminAdmins: (s: UserScope) => [...scopeKey(s), "admin", "admins"] as const,
   adminPermissions: (s: UserScope) => [...scopeKey(s), "admin", "permissions"] as const,
+  reconcileRuns: (s: UserScope) => [...scopeKey(s), "admin", "reconciliation", "runs"] as const,
+  reconcileRun: (s: UserScope, id: string) => [...scopeKey(s), "admin", "reconciliation", "runs", id] as const,
 };
 export const publicKeys = {
   markets: (p: ListMarketsParams) => ["markets", p] as const,

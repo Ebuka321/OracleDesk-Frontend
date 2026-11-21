@@ -34,6 +34,18 @@ export class Sha256 {
   private totalBytes = 0n;
   private finalised = false;
 
+  /** Clones internal state, buffered block, and length counters for midstate reuse. */
+  clone(): Sha256 {
+    const copy = new Sha256();
+    copy.state.set(this.state);
+    copy.block.set(this.block);
+    copy.schedule.set(this.schedule);
+    copy.blockLength = this.blockLength;
+    copy.totalBytes = this.totalBytes;
+    copy.finalised = this.finalised;
+    return copy;
+  }
+
   /** Feeds more bytes. Full 64-byte blocks are compressed immediately; the tail is buffered. */
   update(chunk: Uint8Array): this {
     if (this.finalised) throw new Error("Sha256: update() after digest()");

@@ -1,7 +1,7 @@
 "use client";
 import { Icon } from "@/components/ui/icon";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useCallback, useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useDirection } from "@/components/layout/DirectionProvider";
 import { slideIn } from "@/lib/motion/directional";
@@ -20,15 +20,10 @@ import { QuestionVerificationBadge } from "@/components/question-verification-ba
 import { SafeText } from "@/components/safe-text";
 import { bytesToHex } from "@/lib/stellar/typed-call";
 import { userMessage } from "@/lib/errors/display";
-
-const SourceTag = ({ source }: { source: "chain" | "backend" }) => (
-  <span
-    title={source === "chain" ? "Read live from the market contract" : "OracleDesk backend estimate; may lag the chain"}
-    className={`ms-1 text-[9px] font-bold uppercase px-1 rounded ${source === "chain" ? "bg-secondary-container text-on-secondary-container" : "bg-surface-container-highest text-on-surface-variant"}`}
-  >
-    {source}
-  </span>
-);
+import { SourceTag } from "@/components/ui/source-tag";
+import { ProbabilityBar } from "@/components/ui/probability-bar";
+import { useProvisionalPrice } from "@/lib/realtime/RealtimeProvider";
+import { reconcileDisplayPrice } from "@/lib/realtime/market-price-store";
 
 function chainStatusLabel(view: OnChainMarketView | undefined): string {
   if (!view) return "—";
@@ -199,33 +194,7 @@ const MarketCard = ({ href, category, onChainMarketId, reasoningTraces, expiry, 
               <span className="text-secondary">YES {yesProb}%<SourceTag source={priceSource} ledger={priceLedger} readAt={priceReadAt} /></span>
               <span className="text-tertiary">NO {noProb}%</span>
             </div>
-            <div className="w-full h-2 rounded-full bg-outline-variant overflow-hidden flex">
-              {shouldAnimate ? (
-                <>
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${yesProb}%` }}
-                    className="h-full bg-secondary transition-all duration-700" 
-                  />
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${noProb}%` }}
-                    className="h-full bg-tertiary transition-all duration-700" 
-                  />
-                </>
-              ) : (
-                <>
-                  <div 
-                    style={{ width: `${yesProb}%` }}
-                    className="h-full bg-secondary transition-all duration-700" 
-                  />
-                  <div 
-                    style={{ width: `${noProb}%` }}
-                    className="h-full bg-tertiary transition-all duration-700" 
-                  />
-                </>
-              )}
-            </div>
+            <ProbabilityBar yes={yesProb} no={noProb} heightClassName="h-2" />
           </div>
           <div className="grid grid-cols-2 gap-4 border-t border-outline-variant/30 pt-4">
             <div>
@@ -384,9 +353,21 @@ export default function MarketsPageClient() {
     [marketsData]
   );
 
+  // Stable callback: avoids a new function identity on every render so the
+  // React Compiler (and manual memoization on FilterBar) can optimise correctly.
+  const handleSetStatus = useCallback(
+    (s: string) => setStatus(s as MarketStatus),
+    [],
+  );
+
   return (
     <div className="min-h-screen bg-surface">
       <main className="pt-24 pb-12 px-gutter max-w-container-max-width mx-auto">
+        <FilterBar
+          status={status}
+          setStatus={handleSetStatus}
+          category={category}
+          setCategory={setCategory}
         <h1 id="markets-heading" tabIndex={-1} className="sr-only outline-none">
           Markets
         </h1>

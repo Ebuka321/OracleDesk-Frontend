@@ -8,6 +8,7 @@ import {
   type ContractName,
   type TxDescribedError,
 } from "./errors";
+import { integrityMonitor } from "./integrity-monitor";
 
 export type { TxDescribedError };
 
@@ -145,6 +146,21 @@ export class TxLifecycle<T> {
       this.setPhase({ name: "failed", hash: null, error: described });
       if (err instanceof UserFacingError) throw err;
       throw new UserFacingError(described, err);
+    }
+
+    // 1.5 Pre-sign integrity freshness check
+    try {
+      const integritySnapshot = await integrityMonitor.ensureFresh();
+      if (integritySnapshot.status === "failed") {
+        const described: TxDescribedError = {
+          kind: "contract",
+          message: "This app is out of date with the deployed contracts. Trading is disabled until it's updated.",
+        };
+        this.setPhase({ name: "failed", hash: null, error: described });
+        throw new UserFacingError(described);
+      }
+    } catch (err) {
+      if (err instanceof UserFacingError) throw err;
     }
 
     // 2. Awaiting signature

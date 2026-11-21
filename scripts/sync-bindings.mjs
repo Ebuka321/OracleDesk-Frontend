@@ -90,6 +90,35 @@ for (const [src, name] of FILES) {
   }
 }
 
+// Capability spec bundle: base64 ScSpecEntry strings from each generated binding,
+// used by scripts/capabilities-report.mjs and capability tests.
+{
+  const extractSpec = (filename) => {
+    const text = readFileSync(join(DEST, filename), "utf8");
+    const m = /new ContractSpec\(\[([\s\S]*?)\]\)/.exec(text);
+    if (!m) return [];
+    return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+  };
+  const capSpecs = {
+    marketCore: extractSpec("market-core.ts"),
+    treasury: extractSpec("treasury.ts"),
+    resolver: extractSpec("resolver.ts"),
+    reasoningRegistry: extractSpec("reasoning-registry.ts"),
+  };
+  const to = join(DEST, "capability-specs.json");
+  const expected = JSON.stringify(capSpecs, null, 2) + "\n";
+  const current = existsSync(to) ? readFileSync(to, "utf8") : null;
+  if (current === expected) {
+    if (!check) console.log(`up to date  ${relative(ROOT, to)}`);
+  } else if (check) {
+    console.error(`stale       ${relative(ROOT, to)}`);
+    stale++;
+  } else {
+    writeFileSync(to, expected);
+    console.log(`wrote       ${relative(ROOT, to)}`);
+  }
+}
+
 // Pinned contract identity manifest for the app (lib/stellar/config.ts shows
 // it before signing and flags builds that override canonical ids). Built from
 // the submodule's deployments/testnet.json bytes, like the copied JSON above.
@@ -119,6 +148,35 @@ for (const [src, name] of FILES) {
     JSON.stringify(manifest, null, 2) +
     ` as const;\n`;
   const to = join(DEST, "contract-manifest.ts");
+  const current = existsSync(to) ? readFileSync(to, "utf8") : null;
+  if (current === expected) {
+    if (!check) console.log(`up to date  ${relative(ROOT, to)}`);
+  } else if (check) {
+    console.error(`stale       ${relative(ROOT, to)}`);
+    stale++;
+  } else {
+    writeFileSync(to, expected);
+    console.log(`wrote       ${relative(ROOT, to)}`);
+  }
+}
+
+// Capability spec bundle: base64 ScSpecEntry strings from each generated binding,
+// used by scripts/capabilities-report.mjs and capability tests.
+{
+  const extractSpec = (filename) => {
+    const text = readFileSync(join(DEST, filename), "utf8");
+    const m = /new ContractSpec\(\[([\s\S]*?)\]\)/.exec(text);
+    if (!m) return [];
+    return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+  };
+  const capSpecs = {
+    marketCore: extractSpec("market-core.ts"),
+    treasury: extractSpec("treasury.ts"),
+    resolver: extractSpec("resolver.ts"),
+    reasoningRegistry: extractSpec("reasoning-registry.ts"),
+  };
+  const to = join(DEST, "capability-specs.json");
+  const expected = JSON.stringify(capSpecs, null, 2) + "\n";
   const current = existsSync(to) ? readFileSync(to, "utf8") : null;
   if (current === expected) {
     if (!check) console.log(`up to date  ${relative(ROOT, to)}`);

@@ -10,17 +10,6 @@ import React, { useEffect } from "react";
  * the contract calls, which have their own tests.
  */
 
-vi.mock("@/lib/hooks/useViewedAddress", () => ({
-  useViewedAddress: () => ({
-    viewed: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7",
-    source: "connected",
-    isWatching: false,
-    watchError: null,
-    setWatch: () => true,
-    clearWatch: () => {},
-  }),
-}));
-
 vi.mock("@/lib/hooks/useStellar", () => ({
   useAccountAuth: () => ({ data: undefined, isLoading: false }),
   useAccountReserve: () => ({
@@ -87,10 +76,26 @@ vi.mock("@/lib/stellar/ledger-clock", () => ({
 
 const signInWithWallet = vi.fn(async (address: string) => ({ walletAddress: address }));
 
+vi.mock("@/lib/api/client", () => ({
+  SESSION_MODE: "cookie",
+  notifyAuthInvalid: () => false,
+  onAuthSessionChanged: () => () => {},
+  onAuthInvalid: () => () => {},
+  apiGet: vi.fn(),
+  apiPost: vi.fn(),
+  apiPatch: vi.fn(),
+  apiFetch: vi.fn(),
+  apiPath: (...p: string[]) => p.join("/"),
+  API_URL: "http://localhost:8787/api/v1",
+  ApiError: class ApiError extends Error {},
+}));
+
 vi.mock("@/lib/api/auth", () => ({
   getStoredSessionWallet: () => null,
   clearAuthSession: () => {},
   signInWithWallet: (address: string) => signInWithWallet(address),
+  migrateLegacySession: async () => false,
+  getSession: async () => null,
 }));
 
 vi.mock("@/lib/api/cross-tab-sync", () => ({
@@ -112,6 +117,7 @@ vi.mock("next/navigation", () => ({
 const { createFakeKit, WalletHarness, CommitCounter, FAKE_ADDRESS } = await import("./wallet-harness");
 const { BuyTicket } = await import("@/components/market/buy-ticket");
 const { useWalletActions, useWalletSession } = await import("@/lib/contexts/WalletContext");
+const { ViewedAddressProvider } = await import("@/lib/hooks/useViewedAddress");
 
 function Header() {
   return <h1>Market question</h1>;
@@ -156,16 +162,18 @@ describe("quick-view render isolation", () => {
 
     render(
       <WalletHarness kit={kit}>
-        <CommitCounter id="header" onCommit={onHeader}>
-          <Header />
-        </CommitCounter>
-        <CommitCounter id="ticket" onCommit={onTicket}>
-          <BuyTicket onChainMarketId="1" side="Yes" />
-        </CommitCounter>
-        <CommitCounter id="session" onCommit={onSession}>
-          <SessionProbe onChange={onSessionValue} />
-        </CommitCounter>
-        <ActionsProbe onChange={onSessionValue} />
+        <ViewedAddressProvider>
+          <CommitCounter id="header" onCommit={onHeader}>
+            <Header />
+          </CommitCounter>
+          <CommitCounter id="ticket" onCommit={onTicket}>
+            <BuyTicket onChainMarketId="1" side="Yes" />
+          </CommitCounter>
+          <CommitCounter id="session" onCommit={onSession}>
+            <SessionProbe onChange={onSessionValue} />
+          </CommitCounter>
+          <ActionsProbe onChange={onSessionValue} />
+        </ViewedAddressProvider>
       </WalletHarness>,
     );
 
@@ -207,13 +215,15 @@ describe("quick-view render isolation", () => {
 
     render(
       <WalletHarness kit={kit}>
-        <CommitCounter id="ticket" onCommit={onTicket}>
-          <BuyTicket onChainMarketId="1" side="Yes" />
-        </CommitCounter>
-        <CommitCounter id="session" onCommit={onSession}>
-          <SessionProbe onChange={onSessionValue} />
-        </CommitCounter>
-        <ActionsProbe onChange={onActionsValue} />
+        <ViewedAddressProvider>
+          <CommitCounter id="ticket" onCommit={onTicket}>
+            <BuyTicket onChainMarketId="1" side="Yes" />
+          </CommitCounter>
+          <CommitCounter id="session" onCommit={onSession}>
+            <SessionProbe onChange={onSessionValue} />
+          </CommitCounter>
+          <ActionsProbe onChange={onActionsValue} />
+        </ViewedAddressProvider>
       </WalletHarness>,
     );
 

@@ -3,6 +3,7 @@ import {
   calcSell,
   collateralOutForShares,
   MathError,
+  MIN_PROB_BPS,
   priceYesBps,
   settleValue,
 } from "../stellar/generated/fpmm";
@@ -15,12 +16,13 @@ import { mulDivFloor } from "../stellar/units";
  * Floating-point conversions are never used anywhere in this module.
  *
  * Why liquidation value differs from mid value:
- * - Mid value prices each share at the marginal FPMM spot probability
- *   (`priceYesBps(reserveYes, reserveNo)`).
+ * - Mid value prices each share at the exact marginal FPMM spot probability
+ *   derived directly from reserves: floor(yes·rNo/(rYes+rNo)) + floor(no·rYes/(rYes+rNo)).
  * - Selling moves the constant-product curve against the seller and deducts
  *   `feeBps` from the gross complete sets burned (`collateralOutForShares` /
- *   `calcSell`). On thin pools or large positions, `gross` approaches
- *   `rOther`, where the pool runs out of counter-reserve liquidity.
+ *   `calcSell`). On thin pools or large positions, sales driving the post-sale
+ *   spot probability below `exitFloorBps` (default MIN_PROB_BPS = 1%) are capped,
+ *   reporting executable proceeds and residual tail value.
  * - For two-sided holdings (both YES and NO > 0), selling one side first
  *   shifts the reserves before the second side is sold. Because protocol fees
  *   stay in the pool and grow the invariant product, selling both sides
@@ -46,10 +48,15 @@ export interface Holding {
 
 export type ValuationBasis = "liquidation" | "resolution" | "mid-only";
 
+export interface ValuationOptions {
+  exitFloorBps?: bigint; // default MIN_PROB_BPS (100 = 1%)
+}
+
 export type Valuation = {
   mid: bigint;
   liquidation: {
     value: bigint;
+    tailValue: bigint;
     sold: Holding;
     unsold: Holding;
     capped: boolean;
@@ -63,6 +70,7 @@ export type Valuation = {
 export interface MaxSellableResult {
   shares: bigint;
   collateral: bigint;
+  tailValue: bigint;
   newReserveSold: bigint;
   newReserveOther: bigint;
   adjustmentSteps: number;
@@ -155,27 +163,38 @@ export function maxSellable(
   rOther: bigint,
   feeBps: bigint,
   want: bigint,
+  exitFloorBps: bigint = MIN_PROB_BPS,
 ): MaxSellableResult {
   if (want <= 0n || rSold <= 0n || rOther <= 0n || feeBps < 0n || feeBps >= BPS) {
     return {
       shares: 0n,
       collateral: 0n,
+      tailValue: 0n,
       newReserveSold: rSold > 0n ? rSold : 0n,
       newReserveOther: rOther > 0n ? rOther : 0n,
       adjustmentSteps: 0,
     };
   }
 
+  const checkFloor = (newResSold: bigint, newResOther: bigint) => {
+    if (exitFloorBps <= 0n) return true;
+    const tot = newResSold + newResOther;
+    return tot > 0n && newResOther * BPS >= exitFloorBps * tot;
+  };
+
   const direct = tryCollateralOut(rSold, rOther, want, feeBps);
   if (direct !== null) {
     const validated = ensureExecutableCollateral(rSold, rOther, feeBps, want, direct);
-    return {
-      shares: want,
-      collateral: validated.collateral,
-      newReserveSold: validated.newReserveSold,
-      newReserveOther: validated.newReserveOther,
-      adjustmentSteps: validated.adjustmentSteps,
-    };
+    if (checkFloor(validated.newReserveSold, validated.newReserveOther)) {
+      return {
+        shares: want,
+        collateral: validated.collateral,
+        tailValue: 0n,
+        newReserveSold: validated.newReserveSold,
+        newReserveOther: validated.newReserveOther,
+        adjustmentSteps: validated.adjustmentSteps,
+      };
+    }
   }
 
   // If `want` failed only because it is too small to produce 1 unit of gross
@@ -184,6 +203,7 @@ export function maxSellable(
     return {
       shares: want,
       collateral: 0n,
+      tailValue: 0n,
       newReserveSold: rSold,
       newReserveOther: rOther,
       adjustmentSteps: 0,
@@ -194,13 +214,15 @@ export function maxSellable(
     return {
       shares: 0n,
       collateral: 0n,
+      tailValue: 0n,
       newReserveSold: rSold,
       newReserveOther: rOther,
       adjustmentSteps: 0,
     };
   }
 
-  // Binary-search the largest `s` in [1, want] that does not exceed pool capacity.
+  // Binary-search the largest `s` in [0, want] that does not exceed pool capacity
+  // and stays at or above exitFloorBps.
   let low = 0n;
   let high = want;
   let bestShares = 0n;
@@ -210,45 +232,68 @@ export function maxSellable(
     const mid = (low + high) / 2n;
     const est = tryCollateralOut(rSold, rOther, mid, feeBps);
     if (est !== null) {
-      bestShares = mid;
-      bestEstimate = est;
-      low = mid;
+      const validated = ensureExecutableCollateral(rSold, rOther, feeBps, mid, est);
+      if (checkFloor(validated.newReserveSold, validated.newReserveOther)) {
+        bestShares = mid;
+        bestEstimate = est;
+        low = mid;
+      } else {
+        high = mid;
+      }
     } else if (!hasAtLeastOneGrossUnit(rSold, rOther, mid)) {
-      // `mid` is below the 1-gross-unit threshold; capacity lies above `mid`.
       low = mid;
     } else {
-      // `mid` exceeds pool liquidity (`gross >= rOther`).
       high = mid;
     }
   }
 
-  if (bestShares === 0n || bestEstimate === 0n) {
-    return {
-      shares: bestShares,
-      collateral: 0n,
-      newReserveSold: rSold,
-      newReserveOther: rOther,
-      adjustmentSteps: 0,
-    };
+  let collateral = 0n;
+  let newReserveSold = rSold;
+  let newReserveOther = rOther;
+  let steps = 0;
+
+  if (bestShares > 0n && bestEstimate > 0n) {
+    const validated = ensureExecutableCollateral(
+      rSold,
+      rOther,
+      feeBps,
+      bestShares,
+      bestEstimate,
+    );
+    collateral = validated.collateral;
+    newReserveSold = validated.newReserveSold;
+    newReserveOther = validated.newReserveOther;
+    steps = validated.adjustmentSteps;
   }
 
-  const validated = ensureExecutableCollateral(
-    rSold,
-    rOther,
-    feeBps,
-    bestShares,
-    bestEstimate,
-  );
+  let tailValue = 0n;
+  if (bestShares < want) {
+    const remaining = want - bestShares;
+    const tailEst = tryCollateralOut(newReserveSold, newReserveOther, remaining, feeBps);
+    if (tailEst !== null && tailEst > 0n) {
+      const tailVal = ensureExecutableCollateral(
+        newReserveSold,
+        newReserveOther,
+        feeBps,
+        remaining,
+        tailEst,
+      );
+      tailValue = tailVal.collateral;
+    }
+  }
+
   return {
     shares: bestShares,
-    collateral: validated.collateral,
-    newReserveSold: validated.newReserveSold,
-    newReserveOther: validated.newReserveOther,
-    adjustmentSteps: validated.adjustmentSteps,
+    collateral,
+    tailValue,
+    newReserveSold,
+    newReserveOther,
+    adjustmentSteps: steps,
   };
 }
 
-function computeMid(
+/** floor(yes·rNo/(rYes+rNo)) + floor(no·rYes/(rYes+rNo)); exact spot value, one floor per leg. */
+export function midValue(
   reserveYes: bigint,
   reserveNo: bigint,
   yes: bigint,
@@ -257,11 +302,9 @@ function computeMid(
   if (reserveYes <= 0n || reserveNo <= 0n) return 0n;
   const total = reserveYes + reserveNo;
   if (total <= 0n) return 0n;
-  const p = priceYesBps(reserveYes, reserveNo);
-  const clampedP = p < 0n ? 0n : p > BPS ? BPS : p;
   const hYes = yes > 0n ? yes : 0n;
   const hNo = no > 0n ? no : 0n;
-  return mulDivFloor(hYes, clampedP, BPS) + mulDivFloor(hNo, BPS - clampedP, BPS);
+  return (hYes * reserveNo) / total + (hNo * reserveYes) / total;
 }
 
 /**
@@ -271,10 +314,12 @@ export function valueHolding(
   m: MarketState,
   h: Holding,
   nowSec: bigint,
+  opts?: ValuationOptions,
 ): Valuation {
+  const floor = opts?.exitFloorBps ?? MIN_PROB_BPS;
   const yes = h.yes > 0n ? h.yes : 0n;
   const no = h.no > 0n ? h.no : 0n;
-  const mid = computeMid(m.reserveYes, m.reserveNo, yes, no);
+  const mid = midValue(m.reserveYes, m.reserveNo, yes, no);
 
   if (m.status === "Yes" || m.status === "No" || m.status === "Void") {
     const kind =
@@ -284,6 +329,7 @@ export function valueHolding(
       mid,
       liquidation: {
         value: 0n,
+        tailValue: 0n,
         sold: { yes: 0n, no: 0n },
         unsold: { yes, no },
         capped: false,
@@ -308,6 +354,7 @@ export function valueHolding(
       mid,
       liquidation: {
         value: 0n,
+        tailValue: 0n,
         sold: { yes: 0n, no: 0n },
         unsold: { yes, no },
         capped: false,
@@ -323,6 +370,7 @@ export function valueHolding(
       mid: 0n,
       liquidation: {
         value: 0n,
+        tailValue: 0n,
         sold: { yes: 0n, no: 0n },
         unsold: { yes: 0n, no: 0n },
         capped: false,
@@ -334,11 +382,12 @@ export function valueHolding(
   }
 
   if (no === 0n) {
-    const yesSell = maxSellable(m.reserveYes, m.reserveNo, m.feeBps, yes);
+    const yesSell = maxSellable(m.reserveYes, m.reserveNo, m.feeBps, yes, floor);
     return {
       mid,
       liquidation: {
         value: yesSell.collateral,
+        tailValue: yesSell.tailValue,
         sold: { yes: yesSell.shares, no: 0n },
         unsold: { yes: yes - yesSell.shares, no: 0n },
         capped: yesSell.shares < yes,
@@ -350,11 +399,12 @@ export function valueHolding(
   }
 
   if (yes === 0n) {
-    const noSell = maxSellable(m.reserveNo, m.reserveYes, m.feeBps, no);
+    const noSell = maxSellable(m.reserveNo, m.reserveYes, m.feeBps, no, floor);
     return {
       mid,
       liquidation: {
         value: noSell.collateral,
+        tailValue: noSell.tailValue,
         sold: { yes: 0n, no: noSell.shares },
         unsold: { yes: 0n, no: no - noSell.shares },
         capped: noSell.shares < no,
@@ -367,23 +417,27 @@ export function valueHolding(
 
   // Two-sided holding: evaluate both execution orders using post-trade reserves
   // from calcSell for the second leg, and pick the order with the larger payout.
-  const yesFirst1 = maxSellable(m.reserveYes, m.reserveNo, m.feeBps, yes);
+  const yesFirst1 = maxSellable(m.reserveYes, m.reserveNo, m.feeBps, yes, floor);
   const yesFirst2 = maxSellable(
     yesFirst1.newReserveOther,
     yesFirst1.newReserveSold,
     m.feeBps,
     no,
+    floor,
   );
   const yesFirstTotal = yesFirst1.collateral + yesFirst2.collateral;
+  const yesFirstTail = yesFirst1.tailValue + yesFirst2.tailValue;
 
-  const noFirst1 = maxSellable(m.reserveNo, m.reserveYes, m.feeBps, no);
+  const noFirst1 = maxSellable(m.reserveNo, m.reserveYes, m.feeBps, no, floor);
   const noFirst2 = maxSellable(
     noFirst1.newReserveOther,
     noFirst1.newReserveSold,
     m.feeBps,
     yes,
+    floor,
   );
   const noFirstTotal = noFirst1.collateral + noFirst2.collateral;
+  const noFirstTail = noFirst1.tailValue + noFirst2.tailValue;
 
   const useYesFirst =
     yesFirstTotal > noFirstTotal ||
@@ -393,11 +447,13 @@ export function valueHolding(
   const soldYes = useYesFirst ? yesFirst1.shares : noFirst2.shares;
   const soldNo = useYesFirst ? yesFirst2.shares : noFirst1.shares;
   const totalValue = useYesFirst ? yesFirstTotal : noFirstTotal;
+  const totalTail = useYesFirst ? yesFirstTail : noFirstTail;
 
   return {
     mid,
     liquidation: {
       value: totalValue,
+      tailValue: totalTail,
       sold: { yes: soldYes, no: soldNo },
       unsold: { yes: yes - soldYes, no: no - soldNo },
       capped: soldYes < yes || soldNo < no,

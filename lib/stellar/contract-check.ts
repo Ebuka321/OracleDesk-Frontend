@@ -13,7 +13,9 @@ import {
   NETWORK_PASSPHRASE,
   USDC_ASSET,
 } from "./config";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { Compat } from "./capabilities";
+import { CAPABILITIES, resolveCapabilities, type Capability } from "./capability-registry";
 import { FINGERPRINT_ALGO, specFingerprintV1 } from "./spec-fingerprint";
 
 export type ContractKey = "marketCore" | "treasury" | "resolver" | "reasoningRegistry";
@@ -21,13 +23,14 @@ export type ContractKey = "marketCore" | "treasury" | "resolver" | "reasoningReg
 export interface IntegrityResult {
   contract: ContractKey | "usdc";
   id: string;
-  status: "match" | "mismatch" | "not-found" | "wrong-kind" | "unchecked";
+  status: "match" | "compatible" | "mismatch" | "not-found" | "wrong-kind" | "unchecked";
   algo?: string;
   wasmHash?: string;
   onChainFingerprint?: string;
   bundledFingerprint?: string;
   detail?: string;
   checkedAtLedger: number;
+  capabilities?: Partial<Record<Capability, Compat>>;
 }
 
 export const WASM_MAX_CODE_SIZE = 256 * 1024; // 256 KiB cap
@@ -57,6 +60,60 @@ function setCachedFingerprint(wasmHashHex: string, fingerprint: string): void {
     }
   }
   MEMORY_FINGERPRINT_CACHE.set(wasmHashHex, fingerprint);
+}
+
+const MEMORY_CAPS_CACHE = new Map<string, Partial<Record<Capability, Compat>>>();
+
+export function capabilityCacheKey(
+  wasmHashHex: string,
+  buildId: string = process.env.NEXT_PUBLIC_BUILD_ID || "dev",
+): string {
+  return `oracledesk_wasm_caps_v1_${wasmHashHex}_${buildId}`;
+}
+
+export function getCachedCapabilities(
+  wasmHashHex: string,
+  buildId?: string,
+): Partial<Record<Capability, Compat>> | null {
+  const key = capabilityCacheKey(wasmHashHex, buildId);
+  if (typeof window !== "undefined" && window.sessionStorage) {
+    try {
+      const raw = window.sessionStorage.getItem(key);
+      if (raw) return JSON.parse(raw) as Partial<Record<Capability, Compat>>;
+    } catch {
+      // Ignore storage/parse errors
+    }
+  }
+  return MEMORY_CAPS_CACHE.get(key) ?? null;
+}
+
+export function setCachedCapabilities(
+  wasmHashHex: string,
+  caps: Partial<Record<Capability, Compat>>,
+  buildId?: string,
+): void {
+  const key = capabilityCacheKey(wasmHashHex, buildId);
+  if (typeof window !== "undefined" && window.sessionStorage) {
+    try {
+      window.sessionStorage.setItem(key, JSON.stringify(caps));
+    } catch {
+      // Ignore quota/security errors
+    }
+  }
+  MEMORY_CAPS_CACHE.set(key, caps);
+}
+
+function classifyFromCapabilities(
+  contractKey: ContractKey,
+  caps: Partial<Record<Capability, Compat>>,
+): "compatible" | "mismatch" {
+  for (const [cap, compat] of Object.entries(caps) as [Capability, Compat][]) {
+    const def = CAPABILITIES[cap];
+    if (def.contract === contractKey && "core" in def && def.core && !compat.ok) {
+      return "mismatch";
+    }
+  }
+  return "compatible";
 }
 
 /**
@@ -658,6 +715,9 @@ export async function checkContractIntegrity(
 
     if (cachedFp) {
       if (cachedFp === bundledFp) {
+        const caps =
+          getCachedCapabilities(wasmHashHex) ?? resolveCapabilities(name, bundledEntries, bundledEntries);
+        setCachedCapabilities(wasmHashHex, caps);
         results[name] = {
           contract: name,
           id: item.id,
@@ -667,19 +727,33 @@ export async function checkContractIntegrity(
           onChainFingerprint: cachedFp,
           bundledFingerprint: bundledFp,
           checkedAtLedger: latestLedger,
+          capabilities: caps,
         };
       } else {
-        results[name] = {
-          contract: name,
-          id: item.id,
-          status: "mismatch",
-          algo: FINGERPRINT_ALGO,
-          wasmHash: wasmHashHex,
-          onChainFingerprint: cachedFp,
-          bundledFingerprint: bundledFp,
-          detail: "On-chain contract spec differs from bundled bindings",
-          checkedAtLedger: latestLedger,
-        };
+        const cachedCaps = getCachedCapabilities(wasmHashHex);
+        if (cachedCaps) {
+          const status = classifyFromCapabilities(name, cachedCaps);
+          results[name] = {
+            contract: name,
+            id: item.id,
+            status,
+            algo: FINGERPRINT_ALGO,
+            wasmHash: wasmHashHex,
+            onChainFingerprint: cachedFp,
+            bundledFingerprint: bundledFp,
+            detail: status === "compatible" ? "Some optional capabilities are unavailable" : "On-chain contract spec differs from bundled bindings",
+            checkedAtLedger: latestLedger,
+            capabilities: cachedCaps,
+          };
+        } else {
+          // Need on-chain Wasm to resolve per-capability compatibility
+          const existing = unknownWasmHashes.get(wasmHashHex);
+          if (existing) {
+            existing.contracts.push(name);
+          } else {
+            unknownWasmHashes.set(wasmHashHex, { hash: wasmHashBuf, contracts: [name] });
+          }
+        }
       }
     } else {
       const existing = unknownWasmHashes.get(wasmHashHex);
@@ -737,6 +811,8 @@ export async function checkContractIntegrity(
         for (const contractKey of info.contracts) {
           const bEntries = bundledSpec(contractKey);
           const bFp = (await specFingerprintV1(bEntries)).root;
+          const caps = resolveCapabilities(contractKey, onChainEntries, bEntries);
+          setCachedCapabilities(hashHex, caps);
 
           if (onChainFp === bFp) {
             results[contractKey] = {
@@ -748,19 +824,27 @@ export async function checkContractIntegrity(
               onChainFingerprint: onChainFp,
               bundledFingerprint: bFp,
               checkedAtLedger: latestLedger,
+              capabilities: caps,
             };
           } else {
-            const detail = diffSpecs(bEntries, onChainEntries);
+            const status = classifyFromCapabilities(contractKey, caps);
+            const failedReasons = Object.entries(caps)
+              .filter(([, c]) => c && !c.ok)
+              .map(([k, c]) => `${k}: ${(c as { ok: false; reason: string }).reason}`)
+              .slice(0, 3)
+              .join("; ");
+            const detail = failedReasons || diffSpecs(bEntries, onChainEntries);
             results[contractKey] = {
               contract: contractKey,
               id: contractIds[contractKey],
-              status: "mismatch",
+              status,
               algo: FINGERPRINT_ALGO,
               wasmHash: hashHex,
               onChainFingerprint: onChainFp,
               bundledFingerprint: bFp,
               detail,
               checkedAtLedger: latestLedger,
+              capabilities: caps,
             };
           }
         }
@@ -799,14 +883,80 @@ export async function checkContractIntegrity(
   return results as Record<ContractKey | "usdc", IntegrityResult>;
 }
 
+export const INTEGRITY_QUERY_KEY = ["stellar", "integrity", NETWORK_PASSPHRASE] as const;
+
+export function integrityQueryOptions(server?: rpc.Server) {
+  return {
+    queryKey: INTEGRITY_QUERY_KEY,
+    queryFn: () => checkContractIntegrity(server),
+    staleTime: Infinity,
+    refetchInterval: 10 * 60 * 1000, // 10 minutes
+  };
+}
+
 /**
  * React Query hook providing contract integrity status.
  */
 export function useContractIntegrity() {
-  return useQuery({
-    queryKey: ["stellar", "integrity", NETWORK_PASSPHRASE],
-    queryFn: () => checkContractIntegrity(),
-    staleTime: Infinity,
-    refetchInterval: 10 * 60 * 1000, // 10 minutes
-  });
+  return useQuery(integrityQueryOptions());
+}
+
+export interface CapabilitySnapshot {
+  state: "loading" | "ready" | "unchecked";
+  has(c: Capability): boolean;
+  why(c: Capability): string | null;
+}
+
+export function buildCapabilitySnapshot(
+  integrity: Record<ContractKey | "usdc", IntegrityResult> | undefined,
+): CapabilitySnapshot {
+  if (!integrity) {
+    return {
+      state: "loading",
+      has: () => false,
+      why: () => "loading",
+    };
+  }
+  const allUnchecked = Object.values(integrity).every((r) => r.status === "unchecked");
+  const getCompat = (c: Capability): Compat | null => {
+    const def = CAPABILITIES[c];
+    const res = integrity[def.contract];
+    if (!res) return null;
+    if (res.status === "unchecked") {
+      return "core" in def && def.core
+        ? { ok: true }
+        : { ok: false, reason: "couldn't verify" };
+    }
+    return res.capabilities?.[c] ?? { ok: false, reason: "couldn't verify" };
+  };
+  return {
+    state: allUnchecked ? "unchecked" : "ready",
+    has: (c: Capability) => getCompat(c)?.ok === true,
+    why: (c: Capability) => {
+      const compat = getCompat(c);
+      if (!compat) return "couldn't verify";
+      return compat.ok ? null : compat.reason;
+    },
+  };
+}
+
+/** Non-React capability snapshot (shares React Query cache when a queryClient is passed). */
+export async function getCapabilitySnapshot(opts?: {
+  signal?: AbortSignal;
+  server?: rpc.Server;
+  queryClient?: ReturnType<typeof useQueryClient>;
+}): Promise<CapabilitySnapshot> {
+  if (opts?.signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+  const integrity = opts?.queryClient
+    ? await opts.queryClient.ensureQueryData(integrityQueryOptions(opts.server))
+    : await checkContractIntegrity(opts?.server);
+  return buildCapabilitySnapshot(integrity);
+}
+
+/** React hook exposing typed contract capabilities derived from `useContractIntegrity`. */
+export function useContractCapabilities(): CapabilitySnapshot {
+  const { data } = useContractIntegrity();
+  return buildCapabilitySnapshot(data);
 }

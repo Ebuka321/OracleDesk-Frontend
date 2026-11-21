@@ -26,7 +26,7 @@ describe("PwaRegistrar", () => {
             if (event === "message") messageListeners.push(cb);
           }),
           removeEventListener: vi.fn(),
-          register: vi.fn().then(() => ({
+          register: vi.fn().mockResolvedValue({
             waiting: null,
             get installing() {
               return installingWorker;
@@ -34,7 +34,7 @@ describe("PwaRegistrar", () => {
             addEventListener: vi.fn((event: string, cb: () => void) => {
               if (event === "updatefound") registrationCallbacks.updatefound = cb;
             }),
-          })),
+          }),
         },
       },
       writable: true,

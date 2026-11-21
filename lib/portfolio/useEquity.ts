@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { rpc } from "@stellar/stellar-sdk";
 import { useWallet } from "@/lib/contexts/WalletContext";
 import { rpcServer } from "@/lib/stellar/clients";
+import { withRpcPriority } from "@/lib/stellar/rpc-scheduler";
 import { CONTRACTS } from "@/lib/stellar/config";
 import { decodeEvent, eventTopicFilter, type ChainEvent } from "@/lib/stellar/events";
 import { priceYesBps } from "@/lib/stellar/generated/fpmm";
@@ -34,7 +35,7 @@ const SAMPLE_COUNT = 200;
 /** One RPC pass over the wallet's market-core events, newest kept on overflow. */
 async function loadEvents(address: string) {
   const server = rpcServer();
-  const health = await server.getHealth();
+  const health = await withRpcPriority({ priority: "background", tag: "equity" }, () => server.getHealth());
   let startLedger = health.oldestLedger;
   const topics = [
     eventTopicFilter("Trade", { trader: address }),
@@ -50,9 +51,11 @@ async function loadEvents(address: string) {
       events.length = 0;
       let cursor = "";
       while (true) {
-        const page = cursor
-          ? await server.getEvents({ filters, cursor, limit: PAGE_LIMIT })
-          : await server.getEvents({ filters, startLedger, limit: PAGE_LIMIT });
+        const page = await withRpcPriority({ priority: "background", tag: "equity" }, () =>
+          cursor
+            ? server.getEvents({ filters, cursor, limit: PAGE_LIMIT })
+            : server.getEvents({ filters, startLedger, limit: PAGE_LIMIT }),
+        );
         events.push(...page.events);
         // Cursor pages walk forward, so dropping from the front keeps the newest.
         if (events.length > EVENT_CAP) { events.splice(0, events.length - EVENT_CAP); truncated = true; }
@@ -62,7 +65,7 @@ async function loadEvents(address: string) {
       break;
     } catch (error) {
       if (attempt > 0 || !/oldest|retention|startLedger|start ledger/i.test(String(error))) throw error;
-      const fresh = await server.getHealth();
+      const fresh = await withRpcPriority({ priority: "background", tag: "equity" }, () => server.getHealth());
       if (fresh.oldestLedger <= startLedger) throw error;
       startLedger = fresh.oldestLedger;
       truncated = true;
