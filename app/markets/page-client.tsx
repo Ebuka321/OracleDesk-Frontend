@@ -25,6 +25,7 @@ import { ProbabilityBar } from "@/components/ui/probability-bar";
 import { useProvisionalPrice } from "@/lib/realtime/RealtimeProvider";
 import type { Route } from "next";
 import { parseBackendMarketId, parseOnChainMarketId, routes } from "@/lib/routes";
+import { sharedMarketEventCache } from "@/lib/stellar/market-activity";
 import { reconcileDisplayPrice } from "@/lib/realtime/market-price-store";
 
 function chainStatusLabel(view: OnChainMarketView | undefined): string {
@@ -129,6 +130,9 @@ const MarketCard = ({ href, yesHref, noHref, category, onChainMarketId, reasonin
   const liquidity = view
     ? formatUsdcDisplay(view.market.sets_minted)
     : backendLiquidity ?? "—";
+  const activity = onChainMarketId !== null ? sharedMarketEventCache.getActivity(onChainMarketId) : null;
+  const activityVolumeText = activity?.status === "ready" ? formatUsdcDisplay(activity.volume24h) : "—";
+  const activityFeesText = activity?.status === "ready" ? formatUsdcDisplay(activity.fees24h) : "—";
   const platform = onChainMarketId !== null ? `On-chain #${onChainMarketId}` : "Not on-chain yet";
   const latestTrace = reasoningTraces?.[0];
   const aiSignal = latestTrace ? (latestTrace.edge > 0.05 ? "BULLISH" : latestTrace.edge < -0.05 ? "BEARISH" : "NEUTRAL") : "ANALYZING";
@@ -209,6 +213,20 @@ const MarketCard = ({ href, yesHref, noHref, category, onChainMarketId, reasonin
               <p className="text-label-caps text-on-surface-variant uppercase mb-1">On-chain status</p>
               <p className={`font-data-mono text-body-md ${volume24h === 'Open' ? 'text-secondary' : 'text-on-surface-variant'}`}>
                 {chain.isLoading ? "…" : volume24h}
+              </p>
+            </div>
+            <div>
+              <p className="text-label-caps text-on-surface-variant uppercase mb-1">
+                24h Vol{activity?.partial ? " (partial)" : ""}
+              </p>
+              <p className="font-data-mono text-body-md">{activityVolumeText}</p>
+            </div>
+            <div>
+              <p className="text-label-caps text-on-surface-variant uppercase mb-1">
+                24h Fees · Traders
+              </p>
+              <p className="font-data-mono text-body-md">
+                {activity?.status === "ready" ? `${activityFeesText} · ${activity.uniqueTraders}` : "Unavailable"}
               </p>
             </div>
           </div>
