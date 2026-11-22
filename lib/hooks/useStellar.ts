@@ -57,6 +57,8 @@ import { describeSubmission } from "@/lib/stellar/errors";
 import { cancelTradeReads, confirmTrade } from "@/lib/stellar/optimistic-cache";
 import { getSubmitQueue } from "@/lib/stellar/submit-queue";
 import { discoverRedeemable, loadRedeemAllResume, saveRedeemAllResume, type ItemState, type RedeemAllResume, type RedeemDiscovery } from "@/lib/stellar/redeem-all";
+import { marketLedgerKey, positionLedgerKey } from "@/lib/stellar/ledger-entries";
+import { prepareRestore } from "@/lib/stellar/ttl";
 import { fetchVerifiedTrace, type VerifiedTrace } from "@/lib/stellar/verified-trace";
 import { solveSellForShares, reconcileWithQuote } from "@/lib/stellar/sell-solver";
 import { minCollateralForShares } from "@/lib/stellar/quote";
@@ -701,7 +703,6 @@ export function useWriteGuard(target?: ContractKey | "usdc"): (explicitTarget?: 
   const signer = useWalletSigner();
   const { isWrongNetwork, rpcNetwork, walletNetwork } = useWalletNetwork();
   const { viewed, isWatching } = useViewedAddress();
-  const { data: integrity } = useContractIntegrity();
   const queryClient = useQueryClient();
   const updatePending = useUpdatePending();
   const integrity = useIntegrityMonitor();
@@ -756,7 +757,7 @@ function confirmedAmount(value: xdr.ScVal | undefined): bigint {
   return decoded;
 }
 
-function useTxRunner(contract: ContractName) {
+export function useTxRunner(contract: ContractName) {
   const { networkEpoch, assertNetworkCurrent } = useWalletNetwork();
   const [runner] = useState(() => new TxLifecycle<unknown>({ server: () => rpcServer(), contract }));
   const phase = useSyncExternalStore(runner.subscribe, runner.getSnapshot, runner.getSnapshot);
@@ -791,8 +792,8 @@ export interface BuyParams {
 
 export interface PreparedWrite {
   tx: AssembledTransaction<unknown>;
-  kind: "buy" | "sell" | "redeem" | "usdc-transfer";
-  contract: ContractName | "usdc";
+  kind: "buy" | "sell" | "redeem" | "usdc-transfer" | "extend-ttl" | "restore";
+  contract: ContractName | "usdc" | "none";
   derived: Record<string, { value: bigint; from: string }>;
   intent: Record<string, string>;
   builtAt: number;
@@ -1076,7 +1077,8 @@ export async function prepareUsdcTransfer(
 export async function submitPrepared<T>(
   prepared: PreparedWrite,
 ): Promise<{ value: T; txHash: string | null; ledger: number | null }> {
-  return submit(prepared.tx, prepared.contract === "usdc" ? "marketCore" : prepared.contract) as Promise<{ value: T; txHash: string | null; ledger: number | null }>;
+  const contract = prepared.contract === "usdc" || prepared.contract === "none" ? "marketCore" : prepared.contract;
+  return submit(prepared.tx, contract) as Promise<{ value: T; txHash: string | null; ledger: number | null }>;
 }
 
 function checkSimulatedEffects(prep: PreparedWrite, model: ReviewModel): Effect[] | undefined {
@@ -1091,7 +1093,7 @@ function checkSimulatedEffects(prep: PreparedWrite, model: ReviewModel): Effect[
   return undefined;
 }
 
-async function reviewPreparedWrite(
+export async function reviewPreparedWrite(
   initial: PreparedWrite,
   review: PreparedWriteReview | undefined,
   rebuild: () => Promise<PreparedWrite>,
@@ -1147,11 +1149,11 @@ function assertPreparedInvocation(prepared: PreparedWrite, model: ReviewModel): 
   }
 }
 
-function dedupeValue(...values: (string | number | bigint)[]): string {
+export function dedupeValue(...values: (string | number | bigint)[]): string {
   return values.map(String).join(":");
 }
 
-function runQueuedWrite<T>(
+export function runQueuedWrite<T>(
   signer: Signer,
   label: string,
   dedupeKey: string,
@@ -1604,9 +1606,11 @@ export interface RedeemAllController {
   states: Record<string, ItemState>;
   scanning: boolean;
   running: boolean;
+  restoring: boolean;
   error: string | null;
   scan: () => Promise<void>;
   redeemAll: (review?: PreparedWriteReview) => Promise<void>;
+  restoreArchived: (review?: PreparedWriteReview) => Promise<void>;
   retryFailed: (review?: PreparedWriteReview) => Promise<void>;
   skip: (marketId: string) => void;
   cancel: () => void;
@@ -1622,6 +1626,7 @@ export function useRedeemAll(): RedeemAllController {
   const [statesHolder, setStatesHolder] = useState<string | null>(address);
   const [scanning, setScanning] = useState(false);
   const [running, setRunning] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const statesRef = useRef(states);
   const holderRef = useRef<string | null>(address);
@@ -1779,7 +1784,54 @@ export function useRedeemAll(): RedeemAllController {
     }
   };
 
+  const restoreArchived = async (review?: PreparedWriteReview) => {
+    if (!discoveryState || runningRef.current || restoring) return;
+    const archivedItems = discoveryState.redeemables.filter((r) => r.archived);
+    if (archivedItems.length === 0) return;
+
+    let signer: Signer;
+    try {
+      signer = guard("marketCore");
+    } catch (cause) {
+      setError(describeError(cause).message);
+      return;
+    }
+    const holder = signer.publicKey;
+    setRestoring(true);
+    setError(null);
+    try {
+      const keys: xdr.LedgerKey[] = [];
+      for (const item of archivedItems) {
+        if (item.ttl?.position?.key) {
+          keys.push(item.ttl.position.key);
+        } else {
+          keys.push(positionLedgerKey(item.marketId, holder));
+        }
+        if (item.ttl?.market?.key) {
+          keys.push(item.ttl.market.key);
+        } else {
+          keys.push(marketLedgerKey(item.marketId));
+        }
+      }
+      const initial = await prepareRestore(holder, keys);
+      const reviewed = await reviewPreparedWrite(
+        initial,
+        review,
+        () => prepareRestore(holder, keys),
+      );
+      await submitPrepared(reviewed.prepared);
+      await scan();
+    } catch (cause) {
+      setError(describeError(cause).message);
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   const redeemAll = async (review?: PreparedWriteReview) => {
+    if (discovery?.redeemables.some((item) => item.archived)) {
+      await restoreArchived(review);
+    }
     const ids = (discovery?.redeemables ?? []).map((item) => item.marketId.toString());
     await processItems(ids, review);
   };
@@ -1801,7 +1853,7 @@ export function useRedeemAll(): RedeemAllController {
     cancelRef.current = true;
   };
 
-  return { discovery, states: visibleStates, scanning, running, error, scan, redeemAll, retryFailed, skip, cancel };
+  return { discovery, states: visibleStates, scanning, running, restoring, error, scan, redeemAll, restoreArchived, retryFailed, skip, cancel };
 }
 
 /** SEP-41 transfer on the USDC SAC, signed by the connected wallet. */

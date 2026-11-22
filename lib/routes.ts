@@ -233,6 +233,7 @@ export const routes = {
   notifications: (): Route => "/notifications" as Route,
   settings: (): Route => "/settings" as Route,
   stats: (): Route => "/stats" as Route,
+  glossary: (): Route => "/help/glossary" as Route,
   privacy: (): Route => "/privacy" as Route,
   offline: (): Route => "/offline" as Route,
   admin: (): Route => "/admin" as Route,

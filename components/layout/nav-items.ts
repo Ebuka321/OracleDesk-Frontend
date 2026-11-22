@@ -17,6 +17,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
       { label: "Live Terminal", href: routes.marketsTerminal() },
       { label: "Active Market Detail", href: routes.market() },
       { label: "FPMM Explainer", href: routes.learnFpmm() },
+      { label: "Glossary", href: routes.glossary() },
     ],
   },
   {

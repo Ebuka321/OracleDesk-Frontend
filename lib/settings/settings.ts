@@ -36,11 +36,14 @@ export interface TradingSettings {
   /** Slippage tolerance in basis points (integer). */
   slippageBps: number;
   notifications: NotificationSettings;
+  /** Storage TTL warning thresholds in days (e.g. [30, 7]). */
+  ttlThresholdsDays: number[];
 }
 
 export const DEFAULT_SETTINGS: TradingSettings = {
   slippageBps: DEFAULT_SLIPPAGE_BPS,
   notifications: { execution: true, news: true, shifts: false },
+  ttlThresholdsDays: [30, 7],
 };
 
 /** True for an integer within [MIN_SLIPPAGE_BPS, MAX_SLIPPAGE_BPS]. */
@@ -76,6 +79,12 @@ export function normalizeSettings(raw: unknown): TradingSettings {
       ? source.slippageBps
       : DEFAULT_SLIPPAGE_BPS,
     notifications: normalizeNotifications(source.notifications),
+    ttlThresholdsDays:
+      Array.isArray(source.ttlThresholdsDays) &&
+      source.ttlThresholdsDays.length > 0 &&
+      source.ttlThresholdsDays.every((n) => typeof n === "number" && Number.isFinite(n) && n > 0)
+        ? source.ttlThresholdsDays
+        : DEFAULT_SETTINGS.ttlThresholdsDays,
   };
 }
 
