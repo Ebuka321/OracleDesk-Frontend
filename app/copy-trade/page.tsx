@@ -19,7 +19,7 @@ import { userMessage } from "@/lib/errors/display";
 import { useMarket } from "@/lib/hooks/useMarkets";
 import { useQuoteBuy, useUsdcBalance, useAccountReserve, usePrepareBuy, useOnChainMarket, fetchOnChainMarketBySimulation, useUsdcTrustline, useEnableUsdc, useUsdcBalanceState, type PreparedWriteReview } from "@/lib/hooks/useStellar";
 import { explorerTx, NETWORK_LABEL } from "@/lib/stellar/config";
-import { parseRecordId } from "@/lib/validation/ids";
+import { parseCopyTradeParams, routes } from "@/lib/routes";
 import { formatUsdc, formatXlm, minOut, bpsToPercent, probabilityToBps, tryParseUsdc, BPS } from "@/lib/stellar/units";
 import { chooseCollateral, maxCollateralForEdge, quoteCopy, type CopyMarket, type CopyQuote, type SizingMode } from "@/lib/stellar/quote";
 import type { OutcomeTag } from "@/lib/stellar/clients";
@@ -119,10 +119,10 @@ function CopyTradeContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const rawTraceId = searchParams.get("traceId");
-  const traceId = parseRecordId(rawTraceId);
-  const marketIdParam = parseRecordId(searchParams.get("marketId"));
-  const invalidTraceLink = Boolean(rawTraceId) && !traceId;
+  const parsedParams = parseCopyTradeParams(searchParams);
+  const traceId = parsedParams.ok ? parsedParams.traceId : null;
+  const marketIdParam = parsedParams.ok ? parsedParams.marketId : null;
+  const invalidTraceLink = !parsedParams.ok && parsedParams.invalid.includes("traceId");
 
   const traceQuery = useTrace(traceId ?? undefined);
   const trace = traceQuery.data ?? null;
@@ -523,7 +523,7 @@ function CopyTradeContent() {
                   {typeof trace?.betFraction === "number" ? (
                     `The agent bet ${(trace.betFraction * 100).toFixed(1)}% of its bankroll. You copy the same share of your balance, capped as below.`
                   ) : (
-                    <>Unlock this trace to mirror the agent&apos;s size. <Link href="/premium" className="underline">See access options</Link></>
+                    <>Unlock this trace to mirror the agent&apos;s size. <Link href={routes.premium()} className="underline">See access options</Link></>
                   )}
                 </p>
               )}

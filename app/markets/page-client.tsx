@@ -23,6 +23,8 @@ import { userMessage } from "@/lib/errors/display";
 import { SourceTag } from "@/components/ui/source-tag";
 import { ProbabilityBar } from "@/components/ui/probability-bar";
 import { useProvisionalPrice } from "@/lib/realtime/RealtimeProvider";
+import type { Route } from "next";
+import { parseBackendMarketId, parseOnChainMarketId, routes } from "@/lib/routes";
 import { reconcileDisplayPrice } from "@/lib/realtime/market-price-store";
 
 function chainStatusLabel(view: OnChainMarketView | undefined): string {
@@ -92,7 +94,9 @@ const FilterBar = ({
 };
 
 interface MarketCardProps {
-  href: string;
+  href: Route;
+  yesHref: Route;
+  noHref: Route;
   category: string;
   onChainMarketId: string | null;
   reasoningTraces?: MarketTracePreview[];
@@ -106,7 +110,7 @@ interface MarketCardProps {
   disableEntrance?: boolean;
 }
 
-const MarketCard = ({ href, category, onChainMarketId, reasoningTraces, expiry, title, backendYesProb, backendLiquidity, disableEntrance, marketId, metaUri, questionHash }: MarketCardProps) => {
+const MarketCard = ({ href, yesHref, noHref, category, onChainMarketId, reasoningTraces, expiry, title, backendYesProb, backendLiquidity, disableEntrance, marketId, metaUri, questionHash }: MarketCardProps) => {
   const reduceMotion = useReducedMotion();
   const shouldAnimate = !disableEntrance && !reduceMotion;
   const chain = useOnChainMarket(onChainMarketId);
@@ -211,8 +215,8 @@ const MarketCard = ({ href, category, onChainMarketId, reasoningTraces, expiry, 
         </div>
       </div>
       <div className="p-3 grid grid-cols-2 gap-2 bg-surface-container-low border-t border-outline-variant">
-        <Link href={`${href}&side=YES`} className="bg-secondary text-primary-foreground py-2.5 rounded-lg font-label-caps text-label-caps font-bold hover:brightness-110 active:opacity-80 transition-all uppercase text-center">Bet Yes</Link>
-        <Link href={`${href}&side=NO`} className="bg-tertiary text-primary-foreground py-2.5 rounded-lg font-label-caps text-label-caps font-bold hover:brightness-110 active:opacity-80 transition-all uppercase text-center">Bet No</Link>
+        <Link href={yesHref} className="bg-secondary text-primary-foreground py-2.5 rounded-lg font-label-caps text-label-caps font-bold hover:brightness-110 active:opacity-80 transition-all uppercase text-center">Bet Yes</Link>
+        <Link href={noHref} className="bg-tertiary text-primary-foreground py-2.5 rounded-lg font-label-caps text-label-caps font-bold hover:brightness-110 active:opacity-80 transition-all uppercase text-center">Bet No</Link>
       </div>
     </>
   );
@@ -306,10 +310,17 @@ function OnChainOnlyMarkets({ knownIds }: { knownIds: Set<string> }) {
         These markets exist on the market contract but the backend has no record of them, so only on-chain data is shown.
       </p>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        {orphans.map((v) => (
+        {orphans.map((v) => {
+          const parsedChainId = parseOnChainMarketId(v.id);
+          const qvHref = parsedChainId ? routes.marketsQuickView({ onChainId: parsedChainId, from: "markets" }) : routes.markets();
+          const yesHref = parsedChainId ? routes.marketsQuickView({ onChainId: parsedChainId, from: "markets", side: "YES" }) : routes.markets();
+          const noHref = parsedChainId ? routes.marketsQuickView({ onChainId: parsedChainId, from: "markets", side: "NO" }) : routes.markets();
+          return (
           <MarketCard
             key={v.id}
-            href={`/markets/quick-view?onChainId=${encodeURIComponent(v.id)}&from=markets`}
+            href={qvHref}
+            yesHref={yesHref}
+            noHref={noHref}
             category={v.market.category.tag}
             onChainMarketId={v.id}
             expiry={new Date(Number(v.market.close_time) * 1000).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).toUpperCase()}
@@ -319,7 +330,8 @@ function OnChainOnlyMarkets({ knownIds }: { knownIds: Set<string> }) {
             metaUri={v.market.meta_uri}
             questionHash={v.market.question_hash ? bytesToHex(v.market.question_hash) : null}
           />
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -426,10 +438,16 @@ export default function MarketsPageClient() {
                 const rawProb = m.currentYesProb ?? m.initialYesProb;
                 const hasSeed = Boolean(m.seedAmountRaw);
                 const rawLiq = hasSeed ? BigInt(m.seedAmountRaw!) : floatUsdcToRaw(m.totalLiquidity);
+                const parsedBackendId = parseBackendMarketId(m.id);
+                const qvHref = parsedBackendId ? routes.marketsQuickView({ marketId: parsedBackendId, from: "markets" }) : routes.markets();
+                const yesHref = parsedBackendId ? routes.marketsQuickView({ marketId: parsedBackendId, from: "markets", side: "YES" }) : routes.markets();
+                const noHref = parsedBackendId ? routes.marketsQuickView({ marketId: parsedBackendId, from: "markets", side: "NO" }) : routes.markets();
                 return (
                   <div {...a11y}>
                     <MarketCard 
-                      href={`/markets/quick-view?marketId=${encodeURIComponent(m.id)}&from=markets`}
+                      href={qvHref}
+                      yesHref={yesHref}
+                      noHref={noHref}
                       category={m.category}
                       onChainMarketId={m.onChainMarketId}
                       reasoningTraces={m.reasoningTraces}

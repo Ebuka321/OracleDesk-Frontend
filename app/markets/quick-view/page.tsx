@@ -16,7 +16,7 @@ const LifecycleTimeline = dynamic(
 );
 import { getMarketByOnChainId, getResolution } from "@/lib/api/markets";
 import { ApiError } from "@/lib/api/client";
-import { parseRecordId, parseU64 } from "@/lib/validation/ids";
+import { parseQuickViewParams, routes } from "@/lib/routes";
 import { useOnChainMarket, usePosition } from "@/lib/hooks/useStellar";
 import { useWalletAddress } from "@/lib/contexts/WalletContext";
 import { useViewedAddress } from "@/lib/hooks/useViewedAddress";
@@ -61,14 +61,13 @@ export default function MarketQuickViewPage() {
 function MarketQuickViewContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const fromParam = searchParams.get("from");
-  const rawMarketId = searchParams.get("marketId");
-  const marketId = parseRecordId(rawMarketId);
-  const rawOnChainId = searchParams.get("onChainId");
-  const onChainIdParam = parseU64(rawOnChainId);
-  const invalidLink = (Boolean(rawMarketId) && !marketId) || (Boolean(rawOnChainId) && !onChainIdParam);
-  const initialSide = searchParams.get("side") === "NO" ? "No" : "Yes";
-  const fromPush = searchParams.get("from") === "push";
+  const parsedParams = parseQuickViewParams(searchParams);
+  const fromParam = parsedParams.ok ? parsedParams.from : null;
+  const marketId = parsedParams.ok ? parsedParams.marketId : null;
+  const onChainIdParam = parsedParams.ok ? parsedParams.onChainId : null;
+  const invalidLink = !parsedParams.ok;
+  const initialSide = parsedParams.ok && parsedParams.side === "NO" ? "No" : "Yes";
+  const fromPush = fromParam === "push";
 
   const closeToMarkets = useCallback(() => {
     if (fromParam === "markets") {
@@ -86,7 +85,7 @@ function MarketQuickViewContent() {
         // Fall back to push
       }
     }
-    router.push("/markets");
+    router.push(routes.markets());
   }, [fromParam, router]);
 
   const backendById = useMarket(marketId ?? undefined);

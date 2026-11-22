@@ -15,6 +15,7 @@ import { type RealtimeEvent, eventKey } from "@/lib/realtime/types";
 import { formatFeedTime } from "@/lib/realtime/format";
 import { RealtimeProfiler } from "@/components/realtime-profiler";
 import { DemoBadge } from "@/components/ui/demo-badge";
+import { parseBackendMarketId, routes } from "@/lib/routes";
 
 const AgentActivityRow = React.memo(function AgentActivityRow({ event }: { event: RealtimeEvent }) {
   const data = event.payload;
@@ -160,10 +161,10 @@ const Hero = () => {
             transition={{ delay: 0.3 }}
             className="flex flex-wrap gap-4"
           >
-            <Link href="/markets" className="bg-primary text-primary-foreground px-8 py-4 rounded-lg font-label-caps text-label-caps tracking-widest hover:brightness-110 transition-all flex items-center gap-2">
+            <Link href={routes.markets()} className="bg-primary text-primary-foreground px-8 py-4 rounded-lg font-label-caps text-label-caps tracking-widest hover:brightness-110 transition-all flex items-center gap-2">
               BROWSE MARKETS <Icon name="trending_up" />
             </Link>
-            <Link href="/reasoning" className="border border-outline text-primary px-8 py-4 rounded-lg font-label-caps text-label-caps tracking-widest hover:bg-surface-container-low transition-all text-center">
+            <Link href={routes.reasoning()} className="border border-outline text-primary px-8 py-4 rounded-lg font-label-caps text-label-caps tracking-widest hover:bg-surface-container-low transition-all text-center">
               VIEW AI FORECASTS
             </Link>
           </motion.div>
@@ -214,7 +215,10 @@ const Hero = () => {
                   </div>
                 </div>
                 <Link
-                  href={`/markets/quick-view?marketId=${encodeURIComponent(market.id)}`}
+                  href={(() => {
+                    const parsedId = parseBackendMarketId(market.id);
+                    return parsedId ? routes.marketsQuickView({ marketId: parsedId }) : routes.markets();
+                  })()}
                   className="w-full border border-primary text-primary py-3 rounded font-label-caps text-label-caps tracking-widest hover:bg-primary/5 transition-colors text-center"
                 >
                   VIEW LIVE MARKET
@@ -247,6 +251,8 @@ interface HomeMarketCardProps {
 }
 
 const MarketCard = ({ id, icon, category, platform, change, title, prob, volume, color = "secondary" }: HomeMarketCardProps) => {
+  const parsedId = id ? parseBackendMarketId(id) : null;
+  const cardHref = parsedId ? routes.marketsQuickView({ marketId: parsedId }) : routes.markets();
   return (
     <div className="bg-white border border-outline-variant p-6 rounded-lg hover:shadow-md transition-all group cursor-pointer block">
       <div className="flex justify-between items-start mb-4">
@@ -263,7 +269,7 @@ const MarketCard = ({ id, icon, category, platform, change, title, prob, volume,
         </div>
         <span className={`font-data-mono text-[12px] ${change.startsWith('+') ? 'text-secondary' : change.startsWith('-') ? 'text-tertiary' : 'text-on-surface-variant'}`}>{change}</span>
       </div>
-      <Link href={id ? `/markets/quick-view?marketId=${encodeURIComponent(id)}` : "/markets"} className="block">
+      <Link href={cardHref} className="block">
         <h3 className="font-headline-sm mb-4 group-hover:text-primary transition-colors">{title}</h3>
       </Link>
       <div className="flex items-center gap-4 mb-6">
@@ -277,7 +283,7 @@ const MarketCard = ({ id, icon, category, platform, change, title, prob, volume,
       <div className="flex justify-between items-center">
         <div className="text-label-caps text-on-surface-variant">Vol: {volume}</div>
         <Link 
-          href={id ? `/markets/quick-view?marketId=${encodeURIComponent(id)}` : "/markets"}
+          href={cardHref}
           className="bg-primary text-primary-foreground px-4 py-2 rounded font-label-caps text-[10px] uppercase group-hover:bg-primary-container"
         >
           Trade Now
@@ -299,7 +305,7 @@ const MarketsGrid = () => {
           <p className="text-on-surface-variant">Real-time betting on global outcomes verified by OracleDesk AI.</p>
         </div>
         <div className="flex gap-2">
-          <Link href="/markets" className="p-2 border border-outline-variant rounded hover:bg-white transition-colors flex items-center gap-2 font-label-caps text-label-caps">
+          <Link href={routes.markets()} className="p-2 border border-outline-variant rounded hover:bg-white transition-colors flex items-center gap-2 font-label-caps text-label-caps">
             VIEW ALL <Icon name="arrow_forward" />
           </Link>
         </div>
@@ -445,7 +451,7 @@ const PortfolioAnalytics = () => {
             <p className="text-body-md text-on-primary-container/80 mb-4">Unlock advanced trace depth and lower trade fees with the Premium pass.</p>
           </div>
           <Link 
-            href="/premium" 
+            href={routes.premium()} 
             className="w-full bg-primary-fixed text-on-primary-fixed py-3 rounded font-bold font-label-caps text-[12px] tracking-widest text-center hover:brightness-110 transition-all"
           >
             UPGRADE NOW

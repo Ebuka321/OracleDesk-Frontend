@@ -27,6 +27,8 @@
     "check:ci-claims": "node scripts/check-ci-claims.mjs",
     "check:origins": "node scripts/check-external-origins.mjs",
     "check:docs": "node scripts/check-doc-claims.mjs",
+    "check:route-params": "node scripts/check-route-params.mjs",
+    "check:route-links": "node scripts/check-route-links.mjs",
     "scan:secrets": "node scripts/scan-build-secrets.mjs",
     "install:allowed-scripts": "node scripts/run-allowed-install-scripts.mjs",
     "perf:lhci": "node scripts/run-lhci.mjs",

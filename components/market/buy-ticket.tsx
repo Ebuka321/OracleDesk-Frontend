@@ -11,6 +11,7 @@ import { SourceTag } from "@/components/ui/source-tag";
 import { TxReview, shouldSkipTxReview } from "@/components/tx-review";
 import { LiveRegion } from "@/components/ui/live-region";
 import { quoteAnnouncement } from "@/lib/ui/quote-announcement";
+import { parseOnChainMarketId, routes } from "@/lib/routes";
 import { useHealth } from "@/lib/health/HealthProvider";
 import {
   useAccountAuth,
@@ -395,7 +396,12 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
               ? `≈ ${formatUsdc(quote.data, { maxDecimals: 2 })} shares, at least ${formatUsdc(minOut(quote.data, slippageBps), { maxDecimals: 2 })} (${bpsToPercent(slippageBps)} slippage)`
               : quote.error ? userMessage(quote.error) : quote.isFetching ? "Quoting…" : ""}
           <Link
-            href={`/learn/fpmm?market=${encodeURIComponent(String(onChainMarketId ?? ""))}&side=${encodeURIComponent(side)}&amount=${encodeURIComponent(String(amountRaw ?? ""))}&slippage=${encodeURIComponent(String(slippageBps))}`}
+            href={routes.learnFpmm({
+              market: parseOnChainMarketId(onChainMarketId) ?? undefined,
+              side,
+              amount: amountRaw !== null ? String(amountRaw) : undefined,
+              slippage: slippageBps,
+            })}
             className="text-[10px] text-primary hover:underline ms-2 inline-flex items-center"
           >
             How is this calculated?

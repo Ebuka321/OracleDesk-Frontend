@@ -13,6 +13,7 @@ import { X402_ENABLED, useUnlockCart } from "@/lib/hooks/useX402";
 import dynamic from "next/dynamic";
 const UnlockCart = dynamic(() => import("@/components/trace/unlock-cart").then((m) => ({ default: m.UnlockCart })), { ssr: false, loading: () => null });
 import { DAILY_PASS_PRICE_RAW } from "@/lib/stellar/config";
+import { parseAgentAddress, parseBackendMarketId, parseTraceId, routes } from "@/lib/routes";
 
 /** Fallback daily-pass price when no trace quoted one (same rule as /premium). */
 
@@ -130,24 +131,42 @@ const ReasoningCard = ({ trace, disableEntrance = true }: ReasoningCardProps) =>
 
       <div className="p-6 bg-surface border-t border-outline-variant flex flex-wrap gap-4 items-center justify-between">
         <div className="flex gap-2">
-          <Link href={`/reasoning/verify?traceId=${encodeURIComponent(id)}`} className="px-4 py-2 bg-surface-container-low border border-outline text-on-surface rounded font-label-caps text-label-caps hover:bg-surface-variant transition-all">Verify</Link>
-          <Link
-            href={`/copy-trade?traceId=${encodeURIComponent(id)}&marketId=${encodeURIComponent(marketId)}`}
-            className="px-4 py-2 bg-primary-container text-white rounded font-label-caps text-label-caps hover:opacity-90 active:opacity-80 transition-all"
-          >
-            Copy Trade
-          </Link>
-          <Link
-            href={`/agent/${encodeURIComponent(trace.agentId ?? id)}`}
-            className="px-4 py-2 bg-surface-container-low border border-outline text-on-surface rounded font-label-caps text-label-caps hover:bg-surface-variant transition-all"
-          >
-            View Agent Profile
-          </Link>
+          {(() => {
+            const parsedTraceId = parseTraceId(id);
+            const parsedMarketId = parseBackendMarketId(marketId);
+            const parsedAgent = parseAgentAddress(trace.agentId) ?? parseBackendMarketId(trace.agentId ?? id);
+            return (
+              <>
+                {parsedTraceId && (
+                  <Link href={routes.reasoningVerify({ traceId: parsedTraceId })} className="px-4 py-2 bg-surface-container-low border border-outline text-on-surface rounded font-label-caps text-label-caps hover:bg-surface-variant transition-all">Verify</Link>
+                )}
+                <Link
+                  href={routes.copyTrade({ traceId: parsedTraceId ?? undefined, marketId: parsedMarketId ?? undefined })}
+                  className="px-4 py-2 bg-primary-container text-white rounded font-label-caps text-label-caps hover:opacity-90 active:opacity-80 transition-all"
+                >
+                  Copy Trade
+                </Link>
+                {parsedAgent && (
+                  <Link
+                    href={routes.agent(parsedAgent)}
+                    className="px-4 py-2 bg-surface-container-low border border-outline text-on-surface rounded font-label-caps text-label-caps hover:bg-surface-variant transition-all"
+                  >
+                    View Agent Profile
+                  </Link>
+                )}
+              </>
+            );
+          })()}
         </div>
-        <Link href={`/premium/trace?traceId=${encodeURIComponent(id)}`} className="flex items-center gap-2 text-primary font-bold font-label-caps text-label-caps border border-primary px-4 py-2 rounded hover:bg-primary-fixed-dim/10">
-          <Icon name="lock_open" />
-          Unlock Premium Trace
-        </Link>
+        {(() => {
+          const parsedTraceId = parseTraceId(id);
+          return (
+            <Link href={routes.premiumTrace(parsedTraceId ?? undefined)} className="flex items-center gap-2 text-primary font-bold font-label-caps text-label-caps border border-primary px-4 py-2 rounded hover:bg-primary-fixed-dim/10">
+              <Icon name="lock_open" />
+              Unlock Premium Trace
+            </Link>
+          );
+        })()}
       </div>
     </div>
   );
