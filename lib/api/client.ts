@@ -10,6 +10,8 @@ export interface ApiRequestOptions {
   expectScope?: UserScope;
   signal?: AbortSignal;
   trace?: TraceCtx;
+  /** Per-user-action idempotency key (reused across retries of the same action). */
+  idempotencyKey?: string;
   /** Internal flag to prevent infinite loops when retrying after step-up auth. */
   _stepUpRetried?: boolean;
 }

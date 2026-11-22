@@ -12,6 +12,7 @@ import { describeError } from "@/lib/stellar/errors";
 import { AddressInput } from "@/components/ui/address-input";
 import { knownAddresses } from "@/lib/stellar/address-book";
 import { asPolicyCheckedAddress, type PolicyCheckedAddress } from "@/lib/stellar/address-policy";
+import { parseOnChainTraceId, routes } from "@/lib/routes";
 
 const SOURCE_LABELS: Record<AgentSource, string> = {
   "event:registered": "AgentRegistered event",
@@ -331,13 +332,16 @@ function AdminAgentsContent() {
                           <a href={explorerAccount(row.address) ?? undefined} target="_blank" rel="noreferrer" className="font-data-mono text-xs break-all text-primary hover:underline">
                             {row.address}
                           </a>
-                          {row.lastTraceId && (
-                            <p className="mt-1 text-xs">
-                              <Link href={`/reasoning/verify?onChainTraceId=${row.lastTraceId}`} className="underline text-on-surface-variant">
-                                Verify newest trace #{row.lastTraceId}
-                              </Link>
-                            </p>
-                          )}
+                          {(() => {
+                            const traceId = row.lastTraceId ? parseOnChainTraceId(row.lastTraceId) : null;
+                            return traceId ? (
+                              <p className="mt-1 text-xs">
+                                <Link href={routes.reasoningVerify({ onChainTraceId: traceId })} className="underline text-on-surface-variant">
+                                  Verify newest trace #{row.lastTraceId}
+                                </Link>
+                              </p>
+                            ) : null;
+                          })()}
                         </td>
                         <td className="px-4 py-4 max-w-[190px]">
                           {row.sources.map((source) => <SourceBadge key={source} source={source} />)}

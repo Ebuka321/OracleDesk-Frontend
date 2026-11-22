@@ -9,6 +9,7 @@ import { formatUsdcDisplay } from "@/lib/format/money";
 import { explorerTx, NETWORK_LABEL } from "@/lib/stellar/config";
 import { formatUsdc } from "@/lib/stellar/units";
 import { SafeText } from "@/components/safe-text";
+import { parseOnChainMarketId, parseTraceId, routes } from "@/lib/routes";
 
 type Filter = "all" | "trades" | "redemptions" | "reasoning" | "transactions";
 const group = (item: InboxItem): Exclude<Filter, "all"> => item.kind === "fill" ? "trades" : item.kind === "trace" ? "reasoning" : item.kind === "redeemable" || item.kind === "redeemed" ? "redemptions" : "transactions";
@@ -58,8 +59,14 @@ export default function NotificationsPage() {
           <div className="flex flex-wrap justify-between gap-2"><h2 className="font-bold text-sm">{title[item.kind]}{item.readAt === null && <span className="text-primary text-xs ms-2">Unread</span>}</h2><time dateTime={new Date(item.createdAt).toISOString()} className="text-xs text-on-surface-variant">{new Date(item.createdAt).toLocaleString()}</time></div>
           <p className="text-sm mt-2">{message(item)}</p>
           <div className="flex flex-wrap gap-4 mt-3 text-xs text-primary">
-            {item.marketId && <Link className="underline" href={`/markets/quick-view?onChainId=${encodeURIComponent(item.marketId)}`}>View market #{item.marketId}</Link>}
-            {item.kind === "trace" && item.data.traceId && <Link className="underline" href={`/reasoning/detail?traceId=${encodeURIComponent(item.data.traceId)}`}>Read reasoning</Link>}
+            {(() => {
+              const chainId = item.marketId ? parseOnChainMarketId(item.marketId) : null;
+              return chainId ? <Link className="underline" href={routes.marketsQuickView({ onChainId: chainId })}>View market #{item.marketId}</Link> : null;
+            })()}
+            {(() => {
+              const traceId = item.kind === "trace" && item.data.traceId ? parseTraceId(item.data.traceId) : null;
+              return traceId ? <Link className="underline" href={routes.reasoningDetail({ traceId })}>Read reasoning</Link> : null;
+            })()}
             {item.txHash && <a className="underline" href={explorerTx(item.txHash) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>}
             {item.readAt === null && <button type="button" onClick={() => void inbox.markRead([item.id])} className="underline">Mark read</button>}
           </div>
