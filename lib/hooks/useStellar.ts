@@ -31,6 +31,11 @@ import { DEBUG_ENABLED } from "@/lib/diagnostics/flags";
 import { recordSimulation } from "@/lib/diagnostics/events";
 import { rpcServer, withPinnedRpc } from "@/lib/stellar/clients";
 import { getTrustlineState, enableUsdcTrustline, usdcClassicAsset, type TrustlineState } from "@/lib/stellar/trustline";
+import {
+  isMainnetPassphrase,
+  verifyAssetIssuer,
+  type IssuerVerificationResult,
+} from "@/lib/stellar/issuer-verification";
 import { read, send, simulated } from "@/lib/stellar/tx";
 import { simulatedWithLedger, submit } from "@/lib/stellar/typed-call";
 import { createMarketBatcher } from "@/lib/stellar/market-batch";
@@ -420,6 +425,18 @@ export function useUsdcTrustline(owner: string | null | undefined) {
   });
 }
 
+export function useUsdcIssuerVerification() {
+  return useQuery<IssuerVerificationResult | null>({
+    queryKey: ["stellar", "usdc-issuer-verification", CONTRACTS.usdc, NETWORK_PASSPHRASE],
+    queryFn: async () => {
+      const asset = await usdcClassicAsset();
+      if (asset.isNative()) return null;
+      return verifyAssetIssuer(asset.getCode(), asset.getIssuer());
+    },
+    staleTime: 60 * 60 * 1000,
+  });
+}
+
 export function useEnableUsdc() {
   const signer = useWriteGuard("usdc");
   const queryClient = useQueryClient();
@@ -427,6 +444,15 @@ export function useEnableUsdc() {
     mutationFn: async () => {
       const wallet = signer("usdc");
       const asset = await usdcClassicAsset();
+      if (!asset.isNative() && isMainnetPassphrase()) {
+        const verification = await verifyAssetIssuer(asset.getCode(), asset.getIssuer());
+        if (verification.status !== "verified") {
+          throw new UserFacingError({
+            kind: "unknown",
+            message: `Cannot enable ${asset.getCode()} on mainnet: ${verification.detail}`,
+          });
+        }
+      }
       const current = await getTrustlineState(wallet.publicKey, asset);
       if (current.kind === "native" || (current.kind === "present" && current.authorized)) {
         return { hash: null, holder: wallet.publicKey };

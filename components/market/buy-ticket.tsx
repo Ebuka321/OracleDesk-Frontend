@@ -29,8 +29,11 @@ import {
   useQuoteBuy,
   useUsdcBalance,
   useUsdcBalanceState,
+  useUsdcIssuerVerification,
   useUsdcTrustline,
 } from "@/lib/hooks/useStellar";
+import { isMainnetPassphrase } from "@/lib/stellar/issuer-verification";
+import { SafeText } from "@/components/safe-text";
 import { useWalletActions, useWalletAddress, useWalletNetwork } from "@/lib/contexts/WalletContext";
 import { useViewedAddress } from "@/lib/hooks/useViewedAddress";
 import { useSettings } from "@/lib/settings/useSettings";
@@ -125,6 +128,9 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
   const ledger = useLedgerClock();
   const trustline = useUsdcTrustline(address);
   const enableUsdc = useEnableUsdc();
+  const issuerVerification = useUsdcIssuerVerification();
+  const mainnet = isMainnetPassphrase();
+  const issuerBlockedOnMainnet = mainnet && issuerVerification.data?.status !== "verified";
   const trustlineMissing = trustline.data?.kind === "missing";
   const trustlineUnauthorized = trustline.data?.kind === "present" && !trustline.data.authorized;
   const buy = useBuy();
@@ -225,6 +231,15 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
       void openModal();
       return;
     }
+    if (issuerBlockedOnMainnet) {
+      setBuyResult({
+        kind: "error",
+        message: issuerVerification.data
+          ? `Trading disabled on mainnet: ${issuerVerification.data.detail}`
+          : "Trading disabled on mainnet until the USDC issuer is verified via stellar.toml.",
+      });
+      return;
+    }
     if (trustlineMissing) {
       setBuyResult({ kind: "error", message: "Enable your USDC trustline below, then click Buy again." });
       return;
@@ -302,6 +317,15 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
   const handlePrepareMultisig = async () => {
     if (!isConnected) {
       void openModal();
+      return;
+    }
+    if (issuerBlockedOnMainnet) {
+      setBuyResult({
+        kind: "error",
+        message: issuerVerification.data
+          ? `Trading disabled on mainnet: ${issuerVerification.data.detail}`
+          : "Trading disabled on mainnet until the USDC issuer is verified via stellar.toml.",
+      });
       return;
     }
     if (isWrongNetwork) {
@@ -453,7 +477,27 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
       )}
       {ledger.now === null && <p className="text-[11px] text-on-surface-variant">Checking market time…</p>}
       {isOpen && !safeToTrade && <p className="text-[11px] text-on-surface-variant">Trading is disabled this close to the market deadline.</p>}
-      {trustlineMissing && !isWrongNetwork && (
+      {issuerVerification.data?.status === "verified" && (
+        <p className="text-[11px] text-secondary">
+          Verified USDC issuer:{" "}
+          <SafeText
+            text={issuerVerification.data.orgName || issuerVerification.data.homeDomain}
+            truncate={60}
+            showToggle={false}
+          />
+          {issuerVerification.data.orgName && (
+            <> (<SafeText text={issuerVerification.data.homeDomain} truncate={50} showToggle={false} />)</>
+          )}
+        </p>
+      )}
+      {issuerVerification.data && issuerVerification.data.status !== "verified" && (
+        <p className={`text-[11px] ${mainnet ? "text-error font-medium" : "text-tertiary"}`} role="status">
+          {mainnet
+            ? `Mainnet trading & trustline blocked (${issuerVerification.data.status}): ${issuerVerification.data.detail}`
+            : `Testnet warning — issuer ${issuerVerification.data.status}: ${issuerVerification.data.detail}`}
+        </p>
+      )}
+      {trustlineMissing && !isWrongNetwork && !issuerBlockedOnMainnet && (
         <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3 space-y-2">
           <p className="text-xs text-on-surface-variant">
             Enable USDC once to buy on Stellar. This creates a trustline and locks one base reserve (typically 0.5 XLM); it does not submit your trade.
