@@ -12,9 +12,26 @@ import { SafeText } from "@/components/safe-text";
 import { parseOnChainMarketId, parseTraceId, routes } from "@/lib/routes";
 
 type Filter = "all" | "trades" | "redemptions" | "reasoning" | "transactions";
-const group = (item: InboxItem): Exclude<Filter, "all"> => item.kind === "fill" ? "trades" : item.kind === "trace" ? "reasoning" : item.kind === "redeemable" || item.kind === "redeemed" ? "redemptions" : "transactions";
+const group = (item: InboxItem): Exclude<Filter, "all"> =>
+  item.kind === "fill"
+    ? "trades"
+    : item.kind === "trace"
+      ? "reasoning"
+      : item.kind === "redeemable" || item.kind === "redeemed"
+        ? "redemptions"
+        : "transactions";
 const labels: Record<Filter, string> = { all: "All", trades: "Trades", redemptions: "Redemptions", reasoning: "Reasoning", transactions: "Transactions" };
-const title: Record<InboxItem["kind"], string> = { fill: "Trade confirmed", redeemable: "Ready to redeem", redeemed: "Shares redeemed", trace: "New market reasoning", "tx-failed": "Transaction failed", "tx-pending": "Transaction pending" };
+const title: Record<InboxItem["kind"], string> = {
+  fill: "Trade confirmed",
+  redeemable: "Ready to redeem",
+  redeemed: "Shares redeemed",
+  trace: "New market reasoning",
+  "tx-failed": "Transaction failed",
+  "tx-pending": "Transaction pending",
+  "deadline-near": "Resolution deadline near",
+  "deadline-passed": "Resolution deadline passed",
+  "storage-expiring": "Storage expiring soon",
+};
 function message(item: InboxItem) {
   const d = item.data;
   switch (item.kind) {
@@ -22,6 +39,9 @@ function message(item: InboxItem) {
     case "redeemable": return `Market #${item.marketId} ${d.outcome === "Void" ? "was voided" : `resolved ${d.outcome}`}. Review your payout and redeem your shares.`;
     case "redeemed": return `${formatUsdcDisplay(BigInt(d.payoutRaw))} paid to your wallet.`;
     case "trace": return `New reasoning on market #${item.marketId}: ${d.action}.`;
+    case "storage-expiring": return `Storage for ${d.entryKind ?? "entry"} in market #${item.marketId} expires in ~${d.ttlDays} days. Extend TTL to avoid archival.`;
+    case "deadline-near": return `Resolution deadline approaching for market #${item.marketId}.`;
+    case "deadline-passed": return `Resolution deadline passed for market #${item.marketId}.`;
     default: return `${d.action}: ${d.message}`;
   }
 }

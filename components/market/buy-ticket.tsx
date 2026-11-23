@@ -46,6 +46,9 @@ import type { ReviewModel } from "@/lib/stellar/tx-decode";
 import type { TxPhase } from "@/lib/stellar/tx-lifecycle";
 import { bpsToPercent, formatUsdc, formatXlm, maxIn, minOut, tryParseUsdc } from "@/lib/stellar/units";
 import { userMessage } from "@/lib/errors/display";
+import { Term } from "@/components/ui/term";
+import { useFormErrors, ErrorSummary, FieldError } from "@/components/ui/form-errors";
+import { mapErrorToField } from "@/lib/forms/error-map";
 
 /** A chain read older than this must be refreshed before a trade is signed. */
 const MARKET_STALE_AFTER_SEC = 60;
@@ -152,6 +155,8 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
   const [buyResult, setBuyResult] = useState<BuyResultState | null>(null);
   const resultContainerRef = useRef<HTMLDivElement | null>(null);
 
+  const form = useFormErrors(["amount", "slippage"] as const);
+
   useEffect(() => {
     if (buyResult?.kind === "success") {
       resultContainerRef.current?.focus();
@@ -252,13 +257,15 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
       setBuyResult({ kind: "error", message: `Switch your wallet to ${NETWORK_LABEL} to place this trade.` });
       return;
     }
-    if (!amountRaw || amountRaw <= 0n) {
-      setBuyResult({
-        kind: "error",
-        message: buyMode === "usdc" ? "Enter an amount like 10 or 2.5." : "Enter a share amount greater than zero.",
-      });
-      return;
-    }
+    const valid = form.attemptSubmit(() => {
+      const errs: Partial<Record<"amount" | "slippage", string>> = {};
+      if (!amountRaw || amountRaw <= 0n) {
+        errs.amount = buyMode === "usdc" ? "Enter an amount like 10 or 2.5." : "Enter a share amount greater than zero.";
+      }
+      return errs;
+    });
+    if (!valid) return;
+
     if (ledger.now === null) {
       setBuyResult({ kind: "pending", message: "Checking market time…" });
       return;
@@ -291,6 +298,17 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
         txHash: result.txHash,
       });
     } catch (err) {
+      const mapped = mapErrorToField(err, {
+        SlippageExceeded: "slippage",
+        InsufficientBalance: "amount",
+        InvalidAmount: "amount",
+        "insufficient-balance": "amount",
+      });
+      if ("field" in mapped.target) {
+        form.setErrors({ [mapped.target.field]: mapped.message });
+      } else {
+        form.setFormError(mapped.message);
+      }
       setBuyResult({
         kind: "error",
         message: userMessage(err),
@@ -359,22 +377,38 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
 
   return (
     <div className="space-y-3">
+      <ErrorSummary
+        errors={form.errors}
+        formError={form.formError}
+        ids={form.ids}
+        labels={{ amount: "Amount", slippage: "Slippage" }}
+        summaryRef={form.summaryRef}
+      />
       <div className="flex items-center gap-3">
         <div className="inline-flex rounded border border-outline-variant p-0.5" role="group" aria-label="Buy amount unit">
           <button type="button" aria-pressed={buyMode === "usdc"} onClick={() => setBuyMode("usdc")} className={`px-2 py-1 text-[10px] rounded ${buyMode === "usdc" ? "bg-primary text-primary-foreground" : "text-on-surface-variant"}`}>USDC</button>
           <button type="button" aria-pressed={buyMode === "shares"} onClick={() => setBuyMode("shares")} className={`px-2 py-1 text-[10px] rounded ${buyMode === "shares" ? "bg-primary text-primary-foreground" : "text-on-surface-variant"}`}>Shares</button>
         </div>
-        <label htmlFor="buy-amount" className="font-label-caps text-label-caps text-on-surface-variant uppercase text-[10px] shrink-0">
+        <label htmlFor={form.ids.amount.input} className="font-label-caps text-label-caps text-on-surface-variant uppercase text-[10px] shrink-0">
           Amount ({buyMode === "usdc" ? "USDC" : `${side.toUpperCase()} shares`})
         </label>
-        <input
-          ref={amountInputRef}
-          id="buy-amount"
-          inputMode="decimal"
-          value={amountInput}
-          onChange={(e) => setAmountInput(e.target.value)}
-          className="flex-1 bg-surface border border-outline-variant rounded p-2 font-data-mono text-sm outline-none focus:ring-2 focus:ring-primary"
-        />
+        <div className="flex-1">
+          <input
+            ref={amountInputRef}
+            id={form.ids.amount.input}
+            inputMode="decimal"
+            value={amountInput}
+            aria-invalid={Boolean(form.errors.amount || (amountInput.trim() !== "" && amountRaw === null))}
+            aria-describedby={form.ids.amount.error}
+            onBlur={() => form.handleBlur("amount")}
+            onChange={(e) => {
+              setAmountInput(e.target.value);
+              if (form.errors.amount) form.clearErrors();
+            }}
+            className="w-full bg-surface border border-outline-variant rounded p-2 font-data-mono text-sm outline-none focus:ring-2 focus:ring-primary"
+          />
+          <FieldError id={form.ids.amount.error} message={form.errors.amount} />
+        </div>
         <button
           type="button"
           onClick={handleBuy}
@@ -500,7 +534,7 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
       {trustlineMissing && !isWrongNetwork && !issuerBlockedOnMainnet && (
         <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3 space-y-2">
           <p className="text-xs text-on-surface-variant">
-            Enable USDC once to buy on Stellar. This creates a trustline and locks one base reserve (typically 0.5 XLM); it does not submit your trade.
+            Enable USDC once to buy on Stellar. This creates a <Term id="trustline">trustline</Term> and locks one <Term id="base-reserve">base reserve</Term> (typically 0.5 <Term id="xlm">XLM</Term>); it does not submit your trade.
           </p>
           <button type="button" onClick={handleEnableUsdc} disabled={enableUsdc.isPending} className="bg-primary text-primary-foreground px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50">
             {enableUsdc.isPending ? "Enabling…" : "Enable USDC"}
