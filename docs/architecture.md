@@ -638,3 +638,11 @@ Transaction and display timing is split between limits the user can adjust and l
 Every single-signer write derives its deadline from ledger time (`getLedgerNow()`), never from the device clock. The deadline is re-checked immediately before the wallet prompt. A signature from a superseded attempt ("Need more time") is discarded and never submitted. Extended time bounds increase exposure to price movement; `min_shares_out` still bounds slippage.
 
 Auto-updating regions (home ticker, trade tape) can be paused with a button, and pause automatically while focus or the pointer is inside them (`lib/a11y/pausable.ts`).
+
+## Trace feed filters and pagination
+
+`/reasoning` combines two kinds of filter. Server-side parameters (`agentType`, backend `marketId`) go to `GET /traces`. Client-side predicates (`onChain`, `verification`, `held`) are applied to each loaded page, and their state lives in the URL (`type`, `market`, `onchain`, `v`, `held`; see `lib/traces/feed-params.ts`).
+
+Pages are fetched automatically only while fewer than 20 items match, and at most 5 pages per filter change or "Load more" press (`lib/hooks/useFilteredTraceFeed.ts`). The header and the live summary report matched against loaded counts. Saved views are per wallet in `localStorage` (`oracledesk:trace-views:v1:<wallet>`, `lib/traces/saved-views.ts`).
+
+Not yet implemented: filters on the agent address and publish time, which need registry facts from the chain, and time-budgeted auto-fetch.
