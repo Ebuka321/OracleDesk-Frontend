@@ -621,3 +621,20 @@ Trace trustworthiness is determined by evaluating rules in strict priority order
 3. **Agent Revocation**: If the publishing agent is `Revoked` and `published_at >= effective_from`, the trace is untrusted (`AgentRevokedAfter: effective_from`).
 4. **Valid**: All checks pass (`Valid`).
 
+
+## Time limits
+
+Transaction and display timing is split between limits the user can adjust and limits the protocol imposes.
+
+| Limit | Source | Adjustable | Value |
+| --- | --- | --- | --- |
+| Signing window, standard | App (`TIMING_LIMITS.standard`) | Yes, in `/settings` | 60 s |
+| Signing window, extended | App (`TIMING_LIMITS.extended`) | Yes, in `/settings` | 300 s |
+| Warning before expiry | App (`WARN_BEFORE_EXPIRY_S`) | No | 20 s |
+| Market close | Protocol | No | Clamped with a 10 s safety margin |
+| x402 authorization | Protocol (`expirationLedger`) | No | Fixed ledger |
+| Multisig session | Protocol (`auth_expiration`) | No | Fixed ledger |
+
+Every single-signer write derives its deadline from ledger time (`getLedgerNow()`), never from the device clock. The deadline is re-checked immediately before the wallet prompt. A signature from a superseded attempt ("Need more time") is discarded and never submitted. Extended time bounds increase exposure to price movement; `min_shares_out` still bounds slippage.
+
+Auto-updating regions (home ticker, trade tape) can be paused with a button, and pause automatically while focus or the pointer is inside them (`lib/a11y/pausable.ts`).
