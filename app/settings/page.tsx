@@ -4,6 +4,7 @@ import { Icon, type IconName } from "@/components/ui/icon";
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/lib/contexts/WalletContext";
+import { TimingSettings } from "@/components/settings/timing-settings";
 import { usePaymentEvents, useSetSpendingAllowance, useSpendingAllowance } from "@/lib/hooks/useTraces";
 import { apiNumberToRaw, computeTodayUsage, rawToApiNumber, validateAllowance } from "@/lib/format/allowance";
 import { formatUsdc, tryParseUsdc } from "@/lib/stellar/units";
@@ -253,7 +254,7 @@ export default function SettingsPage() {
         </div>
         <div className="space-y-8 md:col-span-5">
           <SettingsSection title="Trading defaults" icon="settings_input_component">
-            <p className="text-sm text-on-surface-variant">Trading preference controls are coming soon.</p>
+            <TimingSettings address={wallet.address} />
           </SettingsSection>
         </div>
       </div>
