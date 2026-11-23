@@ -19,6 +19,40 @@ interface FeedFilterBarProps {
   wallet: string | null;
 }
 
+function AgentFilter({ value, onChange }: { value: string | undefined; onChange: (agent: string | undefined) => void }) {
+  const [draft, setDraft] = useState(value ?? "");
+  const [invalid, setInvalid] = useState(false);
+  const apply = () => {
+    const trimmed = draft.trim();
+    if (trimmed === "") {
+      setInvalid(false);
+      onChange(undefined);
+    } else if (/^G[A-Z2-7]{55}$/.test(trimmed)) {
+      setInvalid(false);
+      onChange(trimmed);
+    } else {
+      setInvalid(true);
+    }
+  };
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs font-label-caps uppercase">Agent address</span>
+      <input
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={apply}
+        onKeyDown={(event) => { if (event.key === "Enter") apply(); }}
+        placeholder="G…"
+        spellCheck={false}
+        autoComplete="off"
+        aria-invalid={invalid || undefined}
+        className="w-56 rounded border border-outline-variant bg-surface px-2 py-1 font-data-mono text-xs"
+      />
+      {invalid && <span role="alert" className="text-error text-xs">Enter a G… account address.</span>}
+    </label>
+  );
+}
+
 const VERIFICATION_OPTIONS: { value: Verification; label: string }[] = [
   { value: "verified", label: "Verified" },
   { value: "unchecked", label: "Not verified" },
@@ -75,6 +109,8 @@ export function FeedFilterBar({ filters, onChange, wallet }: FeedFilterBarProps)
             <option value="TRADER">Trader</option>
           </select>
         </label>
+
+        <AgentFilter value={filters.agent} onChange={(agent) => onChange({ ...filters, agent })} />
 
         <label className="flex flex-col gap-1">
           <span className="text-xs font-label-caps uppercase">On chain</span>
