@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNetworkMutation as useMutation } from "@/lib/query/useNetworkMutation";
-import { isWalletCreator, settlementOf } from "@/lib/stellar/lp";
+import { isWalletCreator, settlementOf, validateLpRecipient } from "@/lib/stellar/lp";
+import { marketCoreSupports } from "@/lib/stellar/capabilities";
 import type { ViewedAddress } from "@/lib/stellar/identity";
 import { useContractIntegrity, type ContractKey } from "@/lib/stellar/contract-check";
 import { useViewedAddress } from "@/lib/hooks/useViewedAddress";
@@ -1451,6 +1452,59 @@ export function useRedeem() {
 }
 
 /** The creator's LP pool is separate from their ordinary YES/NO position. */
+/** claim_lp_fees / transfer_lp are only present once the contracts submodule is bumped; see marketCoreSupports. */
+type LpFeeCalls = {
+  claim_lp_fees(args: { market_id: bigint }): Promise<AssembledTransaction<bigint>>;
+  transfer_lp(args: { market_id: bigint; new_creator: string }): Promise<AssembledTransaction<unknown>>;
+};
+
+export function useClaimLpFees() {
+  const guard = useWriteGuard("marketCore");
+  const invalidate = useInvalidateAfterTrade();
+  const runner = useTxRunner("marketCore");
+  const mutation = useMutation({
+    mutationFn: async ({ marketId }: { marketId: bigint | string }) => {
+      const signer = guard("marketCore");
+      return runQueuedWrite(signer, `Claim LP fees #${marketId}`, dedupeValue("claim-lp-fees", marketId), guard, async () => {
+        if (!marketCoreSupports("claim_lp_fees")) {
+          throw new UserFacingError({ kind: "contract", message: "LP fee claims aren't available on this deployment yet." });
+        }
+        const tx = await (marketCore(signer) as unknown as LpFeeCalls).claim_lp_fees({ market_id: toId(marketId) });
+        const { value, txHash } = await runner.start(tx, confirmedAmount);
+        return { amount: value, txHash, holder: signer.publicKey };
+      });
+    },
+    onSuccess: (data, variables) => invalidate(String(variables.marketId), data.holder),
+  });
+  return { ...mutation, phase: runner.phase };
+}
+
+export function useTransferLp() {
+  const guard = useWriteGuard("marketCore");
+  const invalidate = useInvalidateAfterTrade();
+  const runner = useTxRunner("marketCore");
+  const mutation = useMutation({
+    mutationFn: async ({ marketId, newCreator }: { marketId: bigint | string; newCreator: string }) => {
+      const signer = guard("marketCore");
+      return runQueuedWrite(signer, `Transfer LP #${marketId}`, dedupeValue("transfer-lp", marketId, newCreator), guard, async () => {
+        if (!marketCoreSupports("transfer_lp")) {
+          throw new UserFacingError({ kind: "contract", message: "LP role transfers aren't available on this deployment yet." });
+        }
+        const { market } = await fetchOnChainMarketBySimulation(marketId);
+        if (!isWalletCreator(market, signer.publicKey)) throw new UserFacingError({ kind: "contract", message: "Only this market's LP can transfer the role." });
+        if (market.lp_claimed) throw new UserFacingError({ kind: "contract", code: "AlreadyClaimed", message: "The pool is already claimed, so the LP role can't move." });
+        const problem = validateLpRecipient(newCreator, signer.publicKey);
+        if (problem) throw new UserFacingError({ kind: "contract", message: problem });
+        const tx = await (marketCore(signer) as unknown as LpFeeCalls).transfer_lp({ market_id: toId(marketId), new_creator: newCreator.trim() });
+        await runner.start(tx, () => true);
+        return { holder: signer.publicKey, newCreator: newCreator.trim() };
+      });
+    },
+    onSuccess: (data, variables) => invalidate(String(variables.marketId), data.holder),
+  });
+  return { ...mutation, phase: runner.phase };
+}
+
 export function useClaimPoolRemainder() {
   const guard = useWriteGuard("marketCore");
   const invalidate = useInvalidateAfterTrade();
