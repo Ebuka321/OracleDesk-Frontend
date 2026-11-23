@@ -323,6 +323,11 @@ export function getStoredSessionWallet() {
   return storage?.getItem(TOKEN_KEY) ? storage.getItem(WALLET_KEY) : null;
 }
 
+export function getStoredIdentityKey() {
+  const storage = getBrowserStorage();
+  return storage?.getItem(TOKEN_KEY) ? storage.getItem(IDENTITY_KEY) ?? storage.getItem(WALLET_KEY) : null;
+}
+
 export function clearAuthSession() {
   const storage = getBrowserStorage();
   storage?.removeItem(TOKEN_KEY);
