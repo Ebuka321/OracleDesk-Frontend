@@ -36,6 +36,9 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://oracledesk-ba
 const TOKEN_KEY = "oracledesk_token";
 const USER_ID_KEY = "oracledesk_user_id";
 const WALLET_KEY = "oracledesk_wallet";
+const IDENTITY_KEY = "oracledesk_identity_key";
+const SUB_ID_KEY = "oracledesk_sub_id";
+const SUB_ID_KIND_KEY = "oracledesk_sub_id_kind";
 
 function getBrowserStorage() {
   return typeof window === "undefined" ? null : window.localStorage;
@@ -59,11 +62,21 @@ export function getStoredToken() {
   return getBrowserStorage()?.getItem(TOKEN_KEY) ?? null;
 }
 
-export function storeAuthSession(session: { token: string; userId: string; walletAddress: string }) {
+export function storeAuthSession(session: {
+  token: string;
+  userId: string;
+  walletAddress: string;
+  identityKey?: string;
+  subId?: string | null;
+  subIdKind?: "MUXED" | "MEMO" | null;
+}) {
   const storage = getBrowserStorage();
   storage?.setItem(TOKEN_KEY, session.token);
   storage?.setItem(USER_ID_KEY, session.userId);
   storage?.setItem(WALLET_KEY, session.walletAddress);
+  if (session.identityKey) storage?.setItem(IDENTITY_KEY, session.identityKey);
+  if (session.subId) storage?.setItem(SUB_ID_KEY, session.subId);
+  if (session.subIdKind) storage?.setItem(SUB_ID_KIND_KEY, session.subIdKind);
 }
 
 /** Wallet address the stored session belongs to, if any. */
@@ -72,11 +85,19 @@ export function getStoredSessionWallet() {
   return storage?.getItem(TOKEN_KEY) ? storage.getItem(WALLET_KEY) : null;
 }
 
+export function getStoredIdentityKey() {
+  const storage = getBrowserStorage();
+  return storage?.getItem(TOKEN_KEY) ? storage.getItem(IDENTITY_KEY) ?? storage.getItem(WALLET_KEY) : null;
+}
+
 export function clearAuthSession() {
   const storage = getBrowserStorage();
   storage?.removeItem(TOKEN_KEY);
   storage?.removeItem(USER_ID_KEY);
   storage?.removeItem(WALLET_KEY);
+  storage?.removeItem(IDENTITY_KEY);
+  storage?.removeItem(SUB_ID_KEY);
+  storage?.removeItem(SUB_ID_KIND_KEY);
 }
 
 async function request<T>(

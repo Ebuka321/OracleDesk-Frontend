@@ -41,6 +41,33 @@ USDC has 7 decimals. Anything that can reach a transaction is a `bigint` in base
 
 `lib/stellar/generated/` is copied from the pinned `contracts` submodule by `scripts/sync-bindings.mjs`, with a do-not-edit header and `// @ts-nocheck`. CI fails if it's stale. `CATEGORY_TAGS` in `clients.ts` has a compile-time exhaustiveness check against the binding's `Category` type, so a contract enum change breaks the build rather than the UI.
 
+## Custodial identities
+
+Custodial sign-in supports G-addresses, M-addresses, and G-addresses with a decimal
+ID memo. `lib/stellar/identity.ts` keeps the base G account separate from the
+session identity. The identity key mirrors the backend: `G…`, `G…#muxed:<id>`,
+or `G…#memo:<id>`. Session-scoped stores use that key, while chain reads and
+Soroban writes use the base G account. Positions and balances therefore belong
+to the shared account, even though backend attribution remains per sub-identity.
+
+SEP-10 challenge validation requires the requested account/memo, sequence zero,
+the configured home-domain and web-auth operations, and a server signature. Memo
+and muxed forms are mutually exclusive.
+
+## Verified trace cache
+
+Verified trace bytes are stored in IndexedDB only after sha256 matches the
+on-chain trace hash. Reads re-hash before use and delete corrupted entries.
+The cache is content-addressed and is not wallet-partitioned. It is a
+history-hygiene control and never bypasses verification.
+
+## Trade recovery
+
+Buy and sell recovery searches exact bigint sizes against the contract FPMM
+math. It preserves the original intent's worst average price instead of using
+the user's current slippage. Reduced trades and requotes go through the normal
+guarded transaction path.
+
 ## Rendering
 
 All routes prerender as static pages. Pages that read query parameters (`/markets/quick-view`, `/copy-trade`, `/reasoning/verify`) keep `useSearchParams` inside a `<Suspense>` boundary; without it the production build fails.

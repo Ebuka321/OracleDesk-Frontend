@@ -28,6 +28,7 @@ Forgot `--recurse-submodules`? Run `git submodule update --init`.
 
 ```bash
 npm run check:bindings   # generated contract code matches the submodule
+npm run check:entrypoints # every used entrypoint is pinned and reviewed
 npm run typecheck
 npm run lint
 npm test
@@ -55,6 +56,8 @@ git add contracts lib/stellar/generated
 Never edit `lib/stellar/generated/` by hand. If you think a contract needs
 to change, write it up in [docs/contract-requests.md](docs/contract-requests.md)
 and open the issue in the contracts repo.
+
+When adopting an entrypoint, follow [docs/adding-an-entrypoint.md](docs/adding-an-entrypoint.md).
 
 ## Working on a Drips Wave issue
 

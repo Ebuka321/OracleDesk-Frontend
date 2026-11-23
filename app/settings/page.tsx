@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Image from "next/image";
+import { openTraceCache } from "@/lib/stellar/trace-cache";
 
 const SettingsSection = ({ title, icon, children, className = "" }: { title: string; icon: string; children: React.ReactNode; className?: string }) => (
   <section className={`bg-surface-container-lowest border border-outline-variant p-6 rounded-lg transition-all hover:shadow-sm ${className}`}>
@@ -30,6 +31,9 @@ const ToggleSwitch = ({ checked, onChange, label, sublabel }: { checked: boolean
 
 export default function SettingsPage() {
   const [slippage, setSlippage] = useState("0.5%");
+  const [traceCacheEnabled, setTraceCacheEnabled] = useState(() =>
+    typeof window === "undefined" ? true : window.localStorage.getItem("oracledesk:trace-cache:enabled") !== "false",
+  );
   const [autoApprove, setAutoApprove] = useState(false);
   const [notifications, setNotifications] = useState({
     execution: true,
@@ -188,6 +192,30 @@ export default function SettingsPage() {
                 checked={notifications.shifts}
                 onChange={() => setNotifications({ ...notifications, shifts: !notifications.shifts })}
               />
+            </div>
+          </SettingsSection>
+
+          <SettingsSection title="Verified trace cache" icon="cached">
+            <div className="space-y-4">
+              <ToggleSwitch
+                label="Keep a local copy of traces I verify"
+                sublabel="Public content remains content-addressed and is re-hashed on every read."
+                checked={traceCacheEnabled}
+                onChange={() => {
+                  const next = !traceCacheEnabled;
+                  setTraceCacheEnabled(next);
+                  window.localStorage.setItem("oracledesk:trace-cache:enabled", String(next));
+                }}
+              />
+              <button
+                onClick={async () => {
+                  const cache = openTraceCache({ budgetBytes: 25 * 1024 * 1024, maxEntryBytes: 8 * 1024 * 1024, enabled: () => true });
+                  await cache.clear();
+                }}
+                className="text-error font-label-caps text-label-caps border border-error px-3 py-2 rounded hover:bg-error-container"
+              >
+                Clear trace cache
+              </button>
             </div>
           </SettingsSection>
 

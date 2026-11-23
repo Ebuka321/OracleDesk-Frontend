@@ -19,6 +19,7 @@ interface VerificationResult {
   storedHash: string;
   computedHash: string | null;
   reason?: string;
+  source?: "network" | "cache";
 }
 
 export default function VerifyTracePage() {
@@ -97,6 +98,7 @@ function VerifyTraceContent() {
         storedHash,
         computedHash: check.status === "unavailable" ? null : check.computedHash,
         reason: check.status === "unavailable" ? check.reason : undefined,
+        source: check.status === "verified" ? check.source : undefined,
       };
       if (check.status === "unavailable") {
         log(`>> [IPFS] ${check.reason}. The content can't be checked.`, 90);
@@ -274,7 +276,9 @@ function VerifyTraceContent() {
                     </h3>
                     <p className="text-sm opacity-80">
                       {verificationResult.verified
-                        ? 'The content hashes to exactly the value recorded in reasoning-registry.'
+                        ? verificationResult.source === "cache"
+                          ? "The content was read from the local verified copy and re-hashed just now."
+                          : "The content hashes to exactly the value recorded in reasoning-registry."
                         : verificationResult.status === 'mismatch'
                           ? "The content doesn't match the on-chain hash. It may have been altered."
                           : `${verificationResult.reason ?? "The content couldn't be fetched"}, so it wasn't verified.`}

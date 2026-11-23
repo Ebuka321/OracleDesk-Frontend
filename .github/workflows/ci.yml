@@ -24,6 +24,9 @@ jobs:
       - name: Generated bindings match the contracts submodule
         run: npm run check:bindings
 
+      - name: Entrypoint usage and review coverage
+        run: npm run check:entrypoints
+
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test

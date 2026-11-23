@@ -10,6 +10,9 @@ import type { Market as OnChainMarket, Position } from "@/lib/stellar/generated/
 import { fetchAndVerifyTrace, type TraceCheck } from "@/lib/stellar/trace";
 import { maxIn, minOut } from "@/lib/stellar/units";
 
+// scaffold:prepare-functions
+// scaffold:hooks
+
 /** Query keys all start with "stellar" so a disconnect can drop them in one go. */
 export const stellarKeys = {
   marketCount: ["stellar", "marketCount"] as const,

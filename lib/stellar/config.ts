@@ -47,6 +47,11 @@ export const isAdminAddress = (address: string | null | undefined) =>
   Boolean(address) && ADMIN_ADDRESSES.includes(address as string);
 
 export const IPFS_GATEWAY = env(process.env.NEXT_PUBLIC_IPFS_GATEWAY_URL, "https://ipfs.io/ipfs");
+export const AUTH_SERVER_KEYS: readonly string[] = (process.env.NEXT_PUBLIC_AUTH_SERVER_KEYS ?? "")
+  .split(",")
+  .map((key) => key.trim())
+  .filter(Boolean);
+export const AUTH_HOME_DOMAIN = env(process.env.NEXT_PUBLIC_AUTH_HOME_DOMAIN, "");
 
 /** The contracts repo's x402 trace service (per-trace unlocks). Empty if not deployed. */
 export const X402_URL = env(process.env.NEXT_PUBLIC_X402_URL, "");
