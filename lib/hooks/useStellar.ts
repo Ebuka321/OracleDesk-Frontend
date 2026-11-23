@@ -45,7 +45,8 @@ import type { Preflight, PreflightFailure, PreflightInput } from "@/lib/stellar/
 import { preflightBuy, preflightRedeem } from "@/lib/stellar/preflight";
 import { assertIntentMatches, describeAssembled, type ReviewModel } from "@/lib/stellar/tx-decode";
 import { decodeStateChanges, assertEffectsMatchIntent, type Effect } from "@/lib/stellar/state-changes";
-import { assertSigningDeadline, deadlineFor, type TransactionDeadline } from "@/lib/stellar/deadline";
+import { assertSigningDeadline, deadlineFor, timeoutForTiming, type TransactionDeadline } from "@/lib/stellar/deadline";
+import type { TimingMode } from "@/lib/settings/settings";
 import { fetchLatestLedger } from "@/lib/stellar/ledger-clock";
 import {
   clampOnChainDeadline,
@@ -761,8 +762,9 @@ export function useTxRunner(contract: ContractName) {
   const { networkEpoch, assertNetworkCurrent } = useWalletNetwork();
   const [runner] = useState(() => new TxLifecycle<unknown>({ server: () => rpcServer(), contract }));
   const phase = useSyncExternalStore(runner.subscribe, runner.getSnapshot, runner.getSnapshot);
-  const start = useCallback(<T, R = T>(tx: AssembledTransaction<T>, parse: (v: xdr.ScVal | undefined) => R, onHash?: (hash: string) => void, onPrompt?: () => void) => {
-    const run = runner.run(tx as AssembledTransaction<unknown>, parse, onHash, () => assertNetworkCurrent?.(networkEpoch), onPrompt) as Promise<{ value: R; txHash: string; ledger: number }>;
+  const supersede = useCallback(() => runner.supersedeSigning(), [runner]);
+  const start = useCallback(<T, R = T>(tx: AssembledTransaction<T>, parse: (v: xdr.ScVal | undefined) => R, onHash?: (hash: string) => void, onPrompt?: () => void, deadline?: TransactionDeadline) => {
+    const run = runner.run(tx as AssembledTransaction<unknown>, parse, onHash, () => assertNetworkCurrent?.(networkEpoch), onPrompt, deadline) as Promise<{ value: R; txHash: string; ledger: number }>;
     if (!DEBUG_ENABLED) return run;
     const method = `submit:${String((tx as { options?: { method?: string } }).options?.method ?? "tx")}`;
     return run.then(
@@ -776,12 +778,14 @@ export function useTxRunner(contract: ContractName) {
       },
     );
   }, [runner, contract, networkEpoch, assertNetworkCurrent]);
-  return { phase, start };
+  return { phase, start, supersede };
 }
 
 export interface BuyParams {
   /** Persist the immutable hash after signing and before submission. */
   onSigned?: (hash: string) => void;
+  /** User timing preference; sets the signing window (protocol limits still apply). */
+  timing?: TimingMode;
   marketId: bigint | string;
   outcome: OutcomeTag;
   collateralIn: bigint;
@@ -1236,8 +1240,9 @@ export function useBuy() {
         throwPreflight(preflightBuy(preflight, outcome, collateralIn));
         // Prepared transactions are fee previews signed by a dummy signer. Always
         // rebuild with the actual wallet and fresh bounds before asking for approval.
-        const initial = await prepareBuy(signer, params);
-        const { prepared } = await reviewPreparedWrite(initial, params.review, () => prepareBuy(signer, params));
+        const buyOpts = { timeoutInSeconds: timeoutForTiming(params.timing ?? "standard") };
+        const initial = await prepareBuy(signer, params, buyOpts);
+        const { prepared } = await reviewPreparedWrite(initial, params.review, () => prepareBuy(signer, params, buyOpts));
         if (prepared.deadline) {
           const latest = await fetchLatestLedger().catch(() => null);
           if (latest) assertSigningDeadline(prepared.deadline, latest.closeTime);
@@ -1250,7 +1255,7 @@ export function useBuy() {
             amounts: { collateralIn: collateralIn.toString(), minSharesOut: minSharesOut.toString() }, networkPassphrase: NETWORK_PASSPHRASE });
         };
         const { value, txHash, ledger } = await runner.start(prepared.tx, confirmedAmount, onHash, () =>
-          track("trade_wallet_prompted", { action: "buy" }));
+          track("trade_wallet_prompted", { action: "buy" }), prepared.deadline);
         return { sharesOut: value, quotedShares: quote, minSharesOut, txHash, ledger, collateralIn, holder: signer.publicKey };
       });
     },
@@ -1272,10 +1277,14 @@ export function useBuy() {
   return {
     ...mutation,
     phase: runner.phase,
+    /** "Need more time": invalidates the pending signature so a rebuilt one can be signed. */
+    cancelSigning: runner.supersede,
   };
 }
 
 export type SellParams = {
+  /** User timing preference; sets the signing window (protocol limits still apply). */
+  timing?: TimingMode;
   marketId: bigint | string;
   outcome: OutcomeTag;
   shares: bigint;
