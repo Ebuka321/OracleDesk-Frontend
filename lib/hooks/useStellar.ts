@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNetworkMutation as useMutation } from "@/lib/query/useNetworkMutation";
-import { isWalletCreator, settlementOf } from "@/lib/stellar/lp";
+import { isWalletCreator, settlementOf, validateLpRecipient } from "@/lib/stellar/lp";
+import { marketCoreSupports } from "@/lib/stellar/capabilities";
 import type { ViewedAddress } from "@/lib/stellar/identity";
 import { useContractIntegrity, type ContractKey } from "@/lib/stellar/contract-check";
 import { useViewedAddress } from "@/lib/hooks/useViewedAddress";
@@ -45,7 +46,8 @@ import type { Preflight, PreflightFailure, PreflightInput } from "@/lib/stellar/
 import { preflightBuy, preflightRedeem } from "@/lib/stellar/preflight";
 import { assertIntentMatches, describeAssembled, type ReviewModel } from "@/lib/stellar/tx-decode";
 import { decodeStateChanges, assertEffectsMatchIntent, type Effect } from "@/lib/stellar/state-changes";
-import { assertSigningDeadline, deadlineFor, type TransactionDeadline } from "@/lib/stellar/deadline";
+import { assertSigningDeadline, deadlineFor, timeoutForTiming, type TransactionDeadline } from "@/lib/stellar/deadline";
+import { loadSettings, type TimingMode } from "@/lib/settings/settings";
 import { fetchLatestLedger } from "@/lib/stellar/ledger-clock";
 import {
   clampOnChainDeadline,
@@ -761,8 +763,9 @@ export function useTxRunner(contract: ContractName) {
   const { networkEpoch, assertNetworkCurrent } = useWalletNetwork();
   const [runner] = useState(() => new TxLifecycle<unknown>({ server: () => rpcServer(), contract }));
   const phase = useSyncExternalStore(runner.subscribe, runner.getSnapshot, runner.getSnapshot);
-  const start = useCallback(<T, R = T>(tx: AssembledTransaction<T>, parse: (v: xdr.ScVal | undefined) => R, onHash?: (hash: string) => void, onPrompt?: () => void) => {
-    const run = runner.run(tx as AssembledTransaction<unknown>, parse, onHash, () => assertNetworkCurrent?.(networkEpoch), onPrompt) as Promise<{ value: R; txHash: string; ledger: number }>;
+  const supersede = useCallback(() => runner.supersedeSigning(), [runner]);
+  const start = useCallback(<T, R = T>(tx: AssembledTransaction<T>, parse: (v: xdr.ScVal | undefined) => R, onHash?: (hash: string) => void, onPrompt?: () => void, deadline?: TransactionDeadline) => {
+    const run = runner.run(tx as AssembledTransaction<unknown>, parse, onHash, () => assertNetworkCurrent?.(networkEpoch), onPrompt, deadline) as Promise<{ value: R; txHash: string; ledger: number }>;
     if (!DEBUG_ENABLED) return run;
     const method = `submit:${String((tx as { options?: { method?: string } }).options?.method ?? "tx")}`;
     return run.then(
@@ -776,12 +779,14 @@ export function useTxRunner(contract: ContractName) {
       },
     );
   }, [runner, contract, networkEpoch, assertNetworkCurrent]);
-  return { phase, start };
+  return { phase, start, supersede };
 }
 
 export interface BuyParams {
   /** Persist the immutable hash after signing and before submission. */
   onSigned?: (hash: string) => void;
+  /** User timing preference; sets the signing window (protocol limits still apply). */
+  timing?: TimingMode;
   marketId: bigint | string;
   outcome: OutcomeTag;
   collateralIn: bigint;
@@ -1236,8 +1241,9 @@ export function useBuy() {
         throwPreflight(preflightBuy(preflight, outcome, collateralIn));
         // Prepared transactions are fee previews signed by a dummy signer. Always
         // rebuild with the actual wallet and fresh bounds before asking for approval.
-        const initial = await prepareBuy(signer, params);
-        const { prepared } = await reviewPreparedWrite(initial, params.review, () => prepareBuy(signer, params));
+        const buyOpts = { timeoutInSeconds: timeoutForTiming(params.timing ?? loadSettings(signer.publicKey).timing.mode) };
+        const initial = await prepareBuy(signer, params, buyOpts);
+        const { prepared } = await reviewPreparedWrite(initial, params.review, () => prepareBuy(signer, params, buyOpts));
         if (prepared.deadline) {
           const latest = await fetchLatestLedger().catch(() => null);
           if (latest) assertSigningDeadline(prepared.deadline, latest.closeTime);
@@ -1250,7 +1256,7 @@ export function useBuy() {
             amounts: { collateralIn: collateralIn.toString(), minSharesOut: minSharesOut.toString() }, networkPassphrase: NETWORK_PASSPHRASE });
         };
         const { value, txHash, ledger } = await runner.start(prepared.tx, confirmedAmount, onHash, () =>
-          track("trade_wallet_prompted", { action: "buy" }));
+          track("trade_wallet_prompted", { action: "buy" }), prepared.deadline);
         return { sharesOut: value, quotedShares: quote, minSharesOut, txHash, ledger, collateralIn, holder: signer.publicKey };
       });
     },
@@ -1272,10 +1278,14 @@ export function useBuy() {
   return {
     ...mutation,
     phase: runner.phase,
+    /** "Need more time": invalidates the pending signature so a rebuilt one can be signed. */
+    cancelSigning: runner.supersede,
   };
 }
 
 export type SellParams = {
+  /** User timing preference; sets the signing window (protocol limits still apply). */
+  timing?: TimingMode;
   marketId: bigint | string;
   outcome: OutcomeTag;
   shares: bigint;
@@ -1326,16 +1336,20 @@ export function useSell() {
       } catch {
         throw new UserFacingError({ kind: "contract", message: "There isn't enough liquidity to sell that many shares." });
       }
+      const sellOpts = {
+        closeTime: market.close_time,
+        timeoutInSeconds: timeoutForTiming(params.timing ?? loadSettings(signer.publicKey).timing.mode),
+      };
       const initial = await prepareSell(
         signer,
         { marketId: id, outcome, collateralOut: plan.collateralOut, maxSharesIn: plan.maxSharesIn },
-        { closeTime: market.close_time },
+        sellOpts,
       );
       const { prepared } = await reviewPreparedWrite(initial, params.review, () =>
         prepareSell(
           signer,
           { marketId: id, outcome, collateralOut: plan.collateralOut, maxSharesIn: plan.maxSharesIn },
-          { closeTime: market.close_time },
+          sellOpts,
         ),
       );
       if (prepared.deadline) {
@@ -1442,6 +1456,59 @@ export function useRedeem() {
 }
 
 /** The creator's LP pool is separate from their ordinary YES/NO position. */
+/** claim_lp_fees / transfer_lp are only present once the contracts submodule is bumped; see marketCoreSupports. */
+type LpFeeCalls = {
+  claim_lp_fees(args: { market_id: bigint }): Promise<AssembledTransaction<bigint>>;
+  transfer_lp(args: { market_id: bigint; new_creator: string }): Promise<AssembledTransaction<unknown>>;
+};
+
+export function useClaimLpFees() {
+  const guard = useWriteGuard("marketCore");
+  const invalidate = useInvalidateAfterTrade();
+  const runner = useTxRunner("marketCore");
+  const mutation = useMutation({
+    mutationFn: async ({ marketId }: { marketId: bigint | string }) => {
+      const signer = guard("marketCore");
+      return runQueuedWrite(signer, `Claim LP fees #${marketId}`, dedupeValue("claim-lp-fees", marketId), guard, async () => {
+        if (!marketCoreSupports("claim_lp_fees")) {
+          throw new UserFacingError({ kind: "contract", message: "LP fee claims aren't available on this deployment yet." });
+        }
+        const tx = await (marketCore(signer) as unknown as LpFeeCalls).claim_lp_fees({ market_id: toId(marketId) });
+        const { value, txHash } = await runner.start(tx, confirmedAmount);
+        return { amount: value, txHash, holder: signer.publicKey };
+      });
+    },
+    onSuccess: (data, variables) => invalidate(String(variables.marketId), data.holder),
+  });
+  return { ...mutation, phase: runner.phase };
+}
+
+export function useTransferLp() {
+  const guard = useWriteGuard("marketCore");
+  const invalidate = useInvalidateAfterTrade();
+  const runner = useTxRunner("marketCore");
+  const mutation = useMutation({
+    mutationFn: async ({ marketId, newCreator }: { marketId: bigint | string; newCreator: string }) => {
+      const signer = guard("marketCore");
+      return runQueuedWrite(signer, `Transfer LP #${marketId}`, dedupeValue("transfer-lp", marketId, newCreator), guard, async () => {
+        if (!marketCoreSupports("transfer_lp")) {
+          throw new UserFacingError({ kind: "contract", message: "LP role transfers aren't available on this deployment yet." });
+        }
+        const { market } = await fetchOnChainMarketBySimulation(marketId);
+        if (!isWalletCreator(market, signer.publicKey)) throw new UserFacingError({ kind: "contract", message: "Only this market's LP can transfer the role." });
+        if (market.lp_claimed) throw new UserFacingError({ kind: "contract", code: "AlreadyClaimed", message: "The pool is already claimed, so the LP role can't move." });
+        const problem = validateLpRecipient(newCreator, signer.publicKey);
+        if (problem) throw new UserFacingError({ kind: "contract", message: problem });
+        const tx = await (marketCore(signer) as unknown as LpFeeCalls).transfer_lp({ market_id: toId(marketId), new_creator: newCreator.trim() });
+        await runner.start(tx, () => true);
+        return { holder: signer.publicKey, newCreator: newCreator.trim() };
+      });
+    },
+    onSuccess: (data, variables) => invalidate(String(variables.marketId), data.holder),
+  });
+  return { ...mutation, phase: runner.phase };
+}
+
 export function useClaimPoolRemainder() {
   const guard = useWriteGuard("marketCore");
   const invalidate = useInvalidateAfterTrade();

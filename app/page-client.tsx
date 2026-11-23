@@ -4,11 +4,13 @@ import { Icon, type IconName } from "@/components/ui/icon";
 import React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { useWallet } from "@/lib/contexts/WalletContext";
+import { useWallet, useWalletAddress } from "@/lib/contexts/WalletContext";
 import { useMarkets } from "@/lib/hooks/useMarkets";
 import { useFeaturedMarket } from "@/lib/hooks/useFeaturedMarket";
 import { yesProb } from "@/lib/markets/featured";
 import { tickerItems } from "@/lib/markets/ticker";
+import { usePausable } from "@/lib/a11y/pausable";
+import { useSettings } from "@/lib/settings/useSettings";
 import { floatUsdcToRaw, formatBps, formatUsdcDisplay } from "@/lib/format/money";
 import { useBurstFeed } from "@/lib/realtime/useBurst";
 import { type RealtimeEvent, eventKey } from "@/lib/realtime/types";
@@ -101,11 +103,25 @@ const ProtocolActivity = () => {
 const Ticker = () => {
   const { data: marketsData } = useMarkets({ limit: 6 });
   const tickerItemsList = tickerItems(marketsData?.markets ?? []);
+  const { address } = useWalletAddress();
+  const { settings } = useSettings(address);
+  const motionControl = usePausable({ initiallyPaused: settings.timing.pauseAutoUpdates });
 
   return (
     <div className="bg-on-background text-primary-fixed-dim py-2 border-b border-outline overflow-hidden">
-      <div className="ticker-wrap w-full">
-        <div className="ticker-content realtime-ticker animate-ticker rtl:animate-ticker-rtl motion-reduce:animate-none font-data-mono text-data-mono uppercase flex gap-8 whitespace-nowrap">
+      <button
+        type="button"
+        aria-pressed={motionControl.pressed}
+        onClick={motionControl.toggle}
+        className="ms-4 mb-1 text-[11px] underline text-primary-fixed-dim"
+      >
+        Pause ticker
+      </button>
+      <div className="ticker-wrap w-full" {...motionControl.bind}>
+        <div
+          className="ticker-content realtime-ticker animate-ticker rtl:animate-ticker-rtl motion-reduce:animate-none font-data-mono text-data-mono uppercase flex gap-8 whitespace-nowrap"
+          style={{ animationPlayState: motionControl.paused ? "paused" : "running" }}
+        >
           {[...tickerItemsList, ...tickerItemsList, ...tickerItemsList].map((item, i) => (
             <span key={`${i}:${item}`} className={i >= tickerItemsList.length ? "motion-reduce:hidden" : ""}>{item} •</span>
           ))}

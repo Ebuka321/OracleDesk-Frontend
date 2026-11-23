@@ -37,6 +37,7 @@ import { SafeText } from "@/components/safe-text";
 import { useWalletActions, useWalletAddress, useWalletNetwork } from "@/lib/contexts/WalletContext";
 import { useViewedAddress } from "@/lib/hooks/useViewedAddress";
 import { useSettings } from "@/lib/settings/useSettings";
+import { SigningCountdown } from "@/components/tx/signing-countdown";
 import { explorerTx, NETWORK_LABEL } from "@/lib/stellar/config";
 import { MIN_TX_TIMEOUT_S, SAFETY_MARGIN_S } from "@/lib/stellar/deadline";
 import { isStale } from "@/lib/stellar/health";
@@ -290,6 +291,7 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
         collateralIn: spendRaw ?? 0n,
         review,
         slippageBps,
+        timing: settings.timing.mode,
         prepared: prepareBuy.data,
       });
       setBuyResult({
@@ -435,6 +437,15 @@ export function BuyTicket({ onChainMarketId, side, amountInputRef }: BuyTicketPr
             : `Buy ${side.toUpperCase()}`}
         </button>
       </div>
+      {buy.phase.name === "awaiting-signature" && buy.phase.deadline && (
+        <SigningCountdown
+          deadline={buy.phase.deadline}
+          onNeedMoreTime={() => {
+            buy.cancelSigning();
+            setBuyResult({ kind: "pending", message: "Signature cancelled. Press Buy again to rebuild with a fresh deadline." });
+          }}
+        />
+      )}
       {isWatching && (
         <p id="watching-trade-explanation" className="sr-only">
           You are viewing another address in watch-only mode. Connect your own wallet to trade.
