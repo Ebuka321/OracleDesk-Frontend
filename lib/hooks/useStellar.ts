@@ -47,7 +47,7 @@ import { preflightBuy, preflightRedeem } from "@/lib/stellar/preflight";
 import { assertIntentMatches, describeAssembled, type ReviewModel } from "@/lib/stellar/tx-decode";
 import { decodeStateChanges, assertEffectsMatchIntent, type Effect } from "@/lib/stellar/state-changes";
 import { assertSigningDeadline, deadlineFor, timeoutForTiming, type TransactionDeadline } from "@/lib/stellar/deadline";
-import type { TimingMode } from "@/lib/settings/settings";
+import { loadSettings, type TimingMode } from "@/lib/settings/settings";
 import { fetchLatestLedger } from "@/lib/stellar/ledger-clock";
 import {
   clampOnChainDeadline,
@@ -1241,7 +1241,7 @@ export function useBuy() {
         throwPreflight(preflightBuy(preflight, outcome, collateralIn));
         // Prepared transactions are fee previews signed by a dummy signer. Always
         // rebuild with the actual wallet and fresh bounds before asking for approval.
-        const buyOpts = { timeoutInSeconds: timeoutForTiming(params.timing ?? "standard") };
+        const buyOpts = { timeoutInSeconds: timeoutForTiming(params.timing ?? loadSettings(signer.publicKey).timing.mode) };
         const initial = await prepareBuy(signer, params, buyOpts);
         const { prepared } = await reviewPreparedWrite(initial, params.review, () => prepareBuy(signer, params, buyOpts));
         if (prepared.deadline) {
@@ -1336,16 +1336,20 @@ export function useSell() {
       } catch {
         throw new UserFacingError({ kind: "contract", message: "There isn't enough liquidity to sell that many shares." });
       }
+      const sellOpts = {
+        closeTime: market.close_time,
+        timeoutInSeconds: timeoutForTiming(params.timing ?? loadSettings(signer.publicKey).timing.mode),
+      };
       const initial = await prepareSell(
         signer,
         { marketId: id, outcome, collateralOut: plan.collateralOut, maxSharesIn: plan.maxSharesIn },
-        { closeTime: market.close_time },
+        sellOpts,
       );
       const { prepared } = await reviewPreparedWrite(initial, params.review, () =>
         prepareSell(
           signer,
           { marketId: id, outcome, collateralOut: plan.collateralOut, maxSharesIn: plan.maxSharesIn },
-          { closeTime: market.close_time },
+          sellOpts,
         ),
       );
       if (prepared.deadline) {
