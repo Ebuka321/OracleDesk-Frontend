@@ -16,6 +16,9 @@ export function parseTraceFilters(sp: URLSearchParams): TraceFeedFilters {
   const market = sp.get("market");
   if (market && MARKET_ID.test(market)) filters.marketId = market;
 
+  const agent = sp.get("agent");
+  if (agent && /^G[A-Z2-7]{55}$/.test(agent)) filters.agent = agent;
+
   const onchain = sp.get("onchain");
   if (onchain === "yes" || onchain === "no") filters.onChain = onchain;
 
@@ -34,6 +37,7 @@ export function serializeTraceFilters(filters: TraceFeedFilters): string {
   const sp = new URLSearchParams();
   if (filters.agentType) sp.set("type", filters.agentType);
   if (filters.marketId) sp.set("market", filters.marketId);
+  if (filters.agent) sp.set("agent", filters.agent);
   if (filters.onChain) sp.set("onchain", filters.onChain);
   if (filters.verification && filters.verification.length > 0) {
     const ordered = VERIFICATION.filter((value) => filters.verification!.includes(value));
