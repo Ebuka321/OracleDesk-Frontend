@@ -12,6 +12,8 @@ export interface TraceFeedFilters {
   agentType?: AgentType;
   /** Server: backend market UUID. */
   marketId?: string;
+  /** Client: backend agent id (`ReasoningTrace.agentId`) equal to this value. */
+  agent?: string;
   /** Client: `onChain: "yes"` keeps traces with an on-chain registry id; `"no"` keeps the rest. */
   onChain?: "yes" | "no";
   /**
@@ -30,6 +32,7 @@ export function isEmptyFilters(filters: TraceFeedFilters): boolean {
     filters.agentType === undefined &&
     filters.marketId === undefined &&
     filters.onChain === undefined &&
+    filters.agent === undefined &&
     (filters.verification === undefined || filters.verification.length === 0) &&
     !filters.held
   );
@@ -53,6 +56,7 @@ export function matches(
   filters: TraceFeedFilters,
   heldMarketIds: ReadonlySet<string> | null,
 ): boolean {
+  if (filters.agent && trace.agentId !== filters.agent) return false;
   if (filters.onChain === "yes" && !trace.onChainTraceId) return false;
   if (filters.onChain === "no" && trace.onChainTraceId) return false;
 
