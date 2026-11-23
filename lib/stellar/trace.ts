@@ -1,21 +1,20 @@
-import { IPFS_GATEWAY } from "./config";
-import { openTraceCache } from "./trace-cache";
+import { parseCid as parseValidCid } from "@/lib/validation/ids";
+import { IPFS_GATEWAYS, IPFS_MAX_TRACE_BYTES, IPFS_TRUSTLESS_GATEWAYS } from "./config";
+import type { TraceWorkerRequest, TraceWorkerResponse, WorkerCheck } from "./trace.worker";
+import { gatewayUrl, normalizeHash, raceGateways, type RaceOptions, type RaceProgress, type TraceCheck } from "./trace-core";
 
 /**
  * Browser port of x402/trace-verification.ts from the contracts repo:
  * hash the exact bytes received and compare with the on-chain trace_hash.
- * Uses WebCrypto, so the checks are async.
+ * Content is only returned when the hash matches.
  */
 
-const toHex = (buf: ArrayBuffer) =>
-  Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+export { normalizeHash, type GatewayAttempt, type TraceCheck } from "./trace-core";
+export { cidDigestCheck, parseCid, type CidCheck } from "./cid";
 
 export async function sha256Hex(content: Uint8Array): Promise<string> {
-  return toHex(await crypto.subtle.digest("SHA-256", content as BufferSource));
-}
-
-export function normalizeHash(hash: string): string {
-  return hash.toLowerCase().replace(/^0x/, "");
+  const digest = await crypto.subtle.digest("SHA-256", content as BufferSource);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export async function verifyTraceHash(content: Uint8Array, expectedHash: string): Promise<boolean> {
@@ -23,17 +22,35 @@ export async function verifyTraceHash(content: Uint8Array, expectedHash: string)
   return /^[0-9a-f]{64}$/.test(normalized) && (await sha256Hex(content)) === normalized;
 }
 
-/** Gateway URL for a CID; accepts bare CIDs and ipfs:// URIs. */
-export function ipfsUrl(cid: string, gateway: string = IPFS_GATEWAY): string {
-  const bare = cid.replace(/^ipfs:\/\//, "");
-  const base = gateway.endsWith("/") ? gateway.slice(0, -1) : gateway;
-  return `${base}/${encodeURIComponent(bare)}`;
+/** Gateway URL for a valid CID, or null when the value is not a CID. */
+export function ipfsUrl(cid: string, gateway: string = IPFS_GATEWAYS[0]): string | null {
+  const parsed = parseValidCid(cid);
+  return parsed ? gatewayUrl(parsed, gateway) : null;
 }
 
-export type TraceCheck =
-  | { status: "verified"; content: unknown; computedHash: string; source: "network" | "cache" }
-  | { status: "mismatch"; computedHash: string }
-  | { status: "unavailable"; reason: string };
+export type TraceFetchOptions = Partial<
+  Pick<RaceOptions, "gateways" | "maxBytes" | "timeoutMs" | "staggerMs" | "signal" | "fetchImpl" | "onProgress">
+>;
+
+/**
+ * Races the configured gateway pool for a trace and checks it against the
+ * on-chain hash. Results carry per-gateway attempts and the CID check.
+ */
+export async function fetchAndVerifyTraceWith(cid: string, onChainHash: string, opts: TraceFetchOptions = {}): Promise<TraceCheck> {
+  if (!parseValidCid(cid)) return { status: "unavailable", reason: "Invalid CID on-chain" };
+  const { check } = await raceGateways({
+    cid,
+    onChainHash,
+    gateways: opts.gateways ?? IPFS_GATEWAYS,
+    maxBytes: opts.maxBytes ?? IPFS_MAX_TRACE_BYTES,
+    timeoutMs: opts.timeoutMs,
+    staggerMs: opts.staggerMs,
+    signal: opts.signal,
+    fetchImpl: opts.fetchImpl,
+    onProgress: opts.onProgress,
+  });
+  return check;
+}
 
 const inflight = new Map<string, Promise<TraceCheck>>();
 let traceCache: ReturnType<typeof openTraceCache> | null = null;
@@ -57,54 +74,134 @@ function getTraceCache() {
  * only returned when it is verified; callers must never render anything
  * else as the trace.
  */
-export async function fetchAndVerifyTrace(
-  cid: string,
-  onChainHash: string,
-  fetchImpl: typeof fetch = fetch,
-  options: { cacheEnabled?: boolean } = {},
-): Promise<TraceCheck> {
-  const key = normalizeHash(onChainHash);
-  if (options.cacheEnabled !== false) {
-    const hit = await getTraceCache().get(key);
-    if (hit) {
-      const text = new TextDecoder().decode(hit.bytes);
-      let content: unknown = text;
-      try { content = JSON.parse(text); } catch {}
-      return { status: "verified", content, computedHash: key, source: "cache" };
-    }
-  }
-  const existing = inflight.get(key);
-  if (existing) return existing;
+export function fetchAndVerifyTrace(cid: string, onChainHash: string, fetchImpl: typeof fetch = fetch): Promise<TraceCheck> {
+  return fetchAndVerifyTraceWith(cid, onChainHash, { fetchImpl });
+}
 
-  const race = (async () => {
-    let bytes: Uint8Array;
-    try {
-      const res = await fetchImpl(ipfsUrl(cid));
-      if (!res.ok) return { status: "unavailable", reason: `IPFS gateway returned HTTP ${res.status}` } as TraceCheck;
-      bytes = new Uint8Array(await res.arrayBuffer());
-    } catch {
-      return { status: "unavailable", reason: "Couldn't reach the IPFS gateway" } as TraceCheck;
-    }
-    const computedHash = await sha256Hex(bytes);
-    if (computedHash !== normalizeHash(onChainHash)) return { status: "mismatch", computedHash } as TraceCheck;
-    if (options.cacheEnabled !== false) {
-      void getTraceCache().put(normalizedHash(onChainHash), bytes, {
-        cid,
-        contentKind: looksLikeJson(bytes) ? "json" : "text",
-      }).catch(() => {});
-    }
-    try {
-      return { status: "verified", content: JSON.parse(new TextDecoder().decode(bytes)), computedHash, source: "network" } as TraceCheck;
-    } catch {
-      return { status: "verified", content: new TextDecoder().decode(bytes), computedHash, source: "network" } as TraceCheck;
-    }
-  })();
-  inflight.set(key, race);
-  try {
-    return await race;
-  } finally {
-    inflight.delete(key);
+// ─── Worker client ──────────────────────────────────────────────────────────
+
+export interface WorkerVerifyOptions {
+  signal?: AbortSignal;
+  onProgress?: (progress: Pick<RaceProgress, "received" | "total">) => void;
+}
+
+interface PendingJob {
+  resolve: (check: TraceCheck) => void;
+  onProgress?: WorkerVerifyOptions["onProgress"];
+  cid: string;
+  onChainHash: string;
+  signal?: AbortSignal;
+}
+
+let worker: Worker | null = null;
+/** Set when the worker can't be created or fails at runtime (for example blocked by CSP). */
+let workerDisabled = false;
+let nextJobId = 0;
+const pendingJobs = new Map<string, PendingJob>();
+
+function rebuildCheck(message: Extract<TraceWorkerResponse, { type: "result" }>): TraceCheck {
+  const check: WorkerCheck = message.check;
+  if (check.status !== "verified") return check;
+  const content =
+    message.contentKind === "json"
+      ? message.json
+      : new TextDecoder().decode(new Uint8Array(message.bytes ?? new ArrayBuffer(0)));
+  return { ...check, content };
+}
+
+function settleAllInThread() {
+  for (const [id, job] of pendingJobs) {
+    pendingJobs.delete(id);
+    void fetchAndVerifyTraceWith(job.cid, job.onChainHash, { signal: job.signal, onProgress: job.onProgress }).then(job.resolve);
   }
+}
+
+function getWorker(): Worker | null {
+  if (workerDisabled) return null;
+  if (worker) return worker;
+  if (typeof Worker === "undefined") {
+    workerDisabled = true;
+    return null;
+  }
+  try {
+    worker = new Worker(new URL("./trace.worker.ts", import.meta.url), { type: "module" });
+  } catch {
+    workerDisabled = true;
+    return null;
+  }
+  worker.onmessage = (event: MessageEvent<TraceWorkerResponse>) => {
+    const message = event.data;
+    const job = pendingJobs.get(message.id);
+    if (!job) return;
+    if (message.type === "progress") {
+      job.onProgress?.({ received: message.received, total: message.total });
+      return;
+    }
+    pendingJobs.delete(message.id);
+    job.resolve(rebuildCheck(message));
+  };
+  // A worker that fails at runtime is abandoned for this page, and its pending jobs run on the main thread.
+  const onWorkerFailure = () => {
+    worker?.terminate();
+    worker = null;
+    workerDisabled = true;
+    settleAllInThread();
+  };
+  worker.onerror = onWorkerFailure;
+  worker.onmessageerror = onWorkerFailure;
+  return worker;
+}
+
+/**
+ * Verifies a trace in the trace worker: streaming download, incremental hash and
+ * JSON decode happen off the main thread. Falls back to the main thread when
+ * workers aren't available. Aborting `signal` cancels the download.
+ */
+export function verifyTraceInWorker(cid: string, onChainHash: string, opts: WorkerVerifyOptions = {}): Promise<TraceCheck> {
+  const target = getWorker();
+  if (!target) return fetchAndVerifyTraceWith(cid, onChainHash, { signal: opts.signal, onProgress: opts.onProgress });
+  if (opts.signal?.aborted) return Promise.resolve({ status: "unavailable", reason: "Cancelled" });
+
+  const id = String(++nextJobId);
+  return new Promise<TraceCheck>((resolve) => {
+    const cancel = () => {
+      if (!pendingJobs.delete(id)) return;
+      target.postMessage({ type: "cancel", id } satisfies TraceWorkerRequest);
+      resolve({ status: "unavailable", reason: "Cancelled" });
+    };
+    pendingJobs.set(id, {
+      cid,
+      onChainHash,
+      signal: opts.signal,
+      onProgress: opts.onProgress,
+      resolve: (check) => {
+        opts.signal?.removeEventListener("abort", cancel);
+        resolve(check);
+      },
+    });
+    opts.signal?.addEventListener("abort", cancel, { once: true });
+    const maxFileBytes = IPFS_MAX_TRACE_BYTES;
+    const carLimits = {
+      maxFileBytes,
+      maxCarBytes: Math.floor(1.25 * maxFileBytes) + 64 * 1024,
+      maxBlocks: 4096,
+      maxBlockBytes: 1024 * 1024 + 1024,
+      maxDepth: 8,
+    };
+    const combinedGateways = [
+      ...IPFS_TRUSTLESS_GATEWAYS,
+      ...IPFS_GATEWAYS.filter((g) => !IPFS_TRUSTLESS_GATEWAYS.includes(g)),
+    ];
+    target.postMessage({
+      type: "verify",
+      id,
+      cid,
+      expectedHash: onChainHash,
+      gateways: combinedGateways,
+      maxBytes: IPFS_MAX_TRACE_BYTES,
+      carLimits,
+    } satisfies TraceWorkerRequest);
+  });
 }
 
 function normalizedHash(hash: string) {

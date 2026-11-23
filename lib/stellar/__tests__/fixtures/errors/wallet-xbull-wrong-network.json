@@ -1,0 +1,16 @@
+{
+  "id": "wallet/xbull/wrong-network",
+  "source": "wallet",
+  "capturedWith": {
+    "sdk": "16.3.1",
+    "kit": "2.5.0",
+    "wallet": "xbull"
+  },
+  "error": {
+    "name": "Error",
+    "message": "wrong network: wallet is on public, app expects testnet"
+  },
+  "expect": {
+    "kind": "wrong-network"
+  }
+}

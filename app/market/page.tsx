@@ -1,287 +1,109 @@
 "use client";
+import { Icon } from "@/components/ui/icon";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { Suspense, useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ReferenceLine,
-  ResponsiveContainer,
-} from "recharts";
+import { useSearchParams } from "next/navigation";
+import PriceChart from "@/components/charts/price-chart";
+import { usePriceHistory } from "@/lib/hooks/usePriceHistory";
+import { DepthChart } from "@/components/charts/depth-chart";
+import { DemoBadge } from "@/components/ui/demo-badge";
+import { SafeText } from "@/components/safe-text";
+import { asDemoId, parseMarketPageParams, routes } from "@/lib/routes";
+// Issue #231: lazy-load committee panel for markets using ResolutionSpec::Committee
+import dynamic from "next/dynamic";
+const CommitteePanel = dynamic(() => import("@/components/market/committee-panel").then((m) => ({ default: m.CommitteePanel })), { ssr: false, loading: () => null });
 
 const MarketHeader = () => {
   return (
-    <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8">
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <span className="px-2 py-0.5 bg-primary-container text-on-primary-container font-label-caps text-[10px] rounded">POLITICS</span>
-          <span className="text-on-surface-variant font-data-mono text-label-caps">#MKT-9204</span>
+    <div className="flex flex-col gap-6 mb-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 bg-primary-container text-on-primary-container font-label-caps text-[10px] rounded">POLITICS</span>
+            <span className="text-on-surface-variant font-data-mono text-label-caps">#MKT-9204</span>
+          </div>
+          <h1 className="font-display-lg text-display-lg text-on-background max-w-3xl">
+            <SafeText text="Will the US Federal Reserve lower rates by 50bps in Q4?" />
+          </h1>
         </div>
-        <h1 className="font-display-lg text-display-lg text-on-background max-w-3xl">Will the US Federal Reserve lower rates by 50bps in Q4?</h1>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-8 border-s border-outline-variant ps-8">
+          <div>
+            <p className="font-label-caps text-label-caps text-on-surface-variant mb-1">PROBABILITY</p>
+            <p className="font-headline-md text-headline-md text-secondary">64.2%</p>
+          </div>
+          <div>
+            <p className="font-label-caps text-label-caps text-on-surface-variant mb-1">VOLUME 24H</p>
+            <p className="font-headline-md text-headline-md text-on-surface">$2.4M</p>
+          </div>
+          <div>
+            <p className="font-label-caps text-label-caps text-on-surface-variant mb-1">LIQUIDITY</p>
+            <p className="font-headline-md text-headline-md text-on-surface">$14.1M</p>
+          </div>
+          <div>
+            <p className="font-label-caps text-label-caps text-on-surface-variant mb-1">END DATE</p>
+            <p className="font-headline-md text-headline-md text-on-surface">DEC 31</p>
+          </div>
+        </div>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-8 border-l border-outline-variant pl-8">
-        <div>
-          <p className="font-label-caps text-label-caps text-on-surface-variant mb-1">PROBABILITY</p>
-          <p className="font-headline-md text-headline-md text-secondary">64.2%</p>
-        </div>
-        <div>
-          <p className="font-label-caps text-label-caps text-on-surface-variant mb-1">VOLUME 24H</p>
-          <p className="font-headline-md text-headline-md text-on-surface">$2.4M</p>
-        </div>
-        <div>
-          <p className="font-label-caps text-label-caps text-on-surface-variant mb-1">LIQUIDITY</p>
-          <p className="font-headline-md text-headline-md text-on-surface">$14.1M</p>
-        </div>
-        <div>
-          <p className="font-label-caps text-label-caps text-on-surface-variant mb-1">END DATE</p>
-          <p className="font-headline-md text-headline-md text-on-surface">DEC 31</p>
-        </div>
+
+      {/* Quick Links */}
+      <div className="flex flex-wrap gap-2">
+        <Link
+          href={routes.marketTraceHistory(asDemoId("9204"))}
+          className="px-4 py-2 bg-surface-container border border-outline-variant text-on-surface rounded font-label-caps text-label-caps hover:bg-surface-container-high transition-colors flex items-center gap-2"
+        >
+          <Icon name="history" className="text-base" />
+          Trace History
+        </Link>
+        <Link
+          href={routes.marketTrades(asDemoId("9204"))}
+          className="px-4 py-2 bg-surface-container border border-outline-variant text-on-surface rounded font-label-caps text-label-caps hover:bg-surface-container-high transition-colors flex items-center gap-2"
+        >
+          <Icon name="link" className="text-base" />
+          Trade Attribution
+        </Link>
       </div>
     </div>
   );
 };
 
-// ── Probability chart data sets per period ─────────────────────────────────
-const generateChartData = (period: string) => {
-  const base = [52, 54, 56, 53, 58, 61, 59, 63, 62, 64, 60, 64, 65, 64, 66, 64];
-  const labels: Record<string, string[]> = {
-    "1H": ["12:00","12:04","12:08","12:12","12:16","12:20","12:24","12:28","12:32","12:36","12:40","12:44","12:48","12:52","12:56","13:00"],
-    "1D": ["Mon","Tue","Wed","Thu","Fri","Sat","Sun","Mon","Tue","Wed","Thu","Fri","Sat","Sun","Mon","Now"],
-    "1W": ["W1","W2","W3","W4","W5","W6","W7","W8","W9","W10","W11","W12","W13","W14","W15","W16"],
-    "ALL": ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar","Apr"],
-  };
-  return base.map((yes, i) => ({
-    time: labels[period]?.[i] ?? String(i),
-    yes: yes + (Math.random() - 0.5) * 2,
-    no: 100 - yes - (Math.random() - 0.5) * 2,
-    volume: Math.floor(800_000 + Math.random() * 1_200_000),
-  }));
+// ── On-chain price chart ───────────────────────────────────────────────────
+// Reads ?onChainId= from the URL; the chart itself is Suspense-wrapped so
+// useSearchParams can prerender without bailing out the whole page.
+const MarketPriceSection = () => {
+  const searchParams = useSearchParams();
+  const parsed = parseMarketPageParams(searchParams);
+  const onChainId = parsed.ok ? parsed.onChainId : null;
+  const { points } = usePriceHistory(onChainId);
+  return <PriceChart points={points} onChainMarketId={onChainId} />;
 };
 
-interface TooltipProps {
-  active?: boolean;
-  label?: string | number;
-  payload?: Array<{ name?: string; value?: number; color?: string; dataKey?: string | number }>;
-}
+const MarketPriceSkeleton = () => (
+  <div className="bg-surface-container-lowest border border-outline-variant p-6 rounded">
+    <div className="h-[340px] w-full animate-pulse-soft rounded bg-surface-container" />
+  </div>
+);
 
-const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-on-background text-surface px-3 py-2 rounded shadow-xl font-data-mono text-[11px] border border-primary/20">
-      <p className="text-outline mb-1">{label}</p>
-      <p className="text-secondary font-bold">YES {payload[0]?.value?.toFixed(1)}%</p>
-      <p className="text-tertiary font-bold">NO {payload[1]?.value?.toFixed(1)}%</p>
-    </div>
-  );
-};
-
-const ProbabilityChart = () => {
-  const [activePeriod, setActivePeriod] = useState("1D");
-  const [activeTab, setActiveTab] = useState<"probability" | "volume">("probability");
-  const [data, setData] = useState(() => generateChartData("1D"));
-  const [liveProb, setLiveProb] = useState(64.2);
-
-  // Simulate live ticking
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setLiveProb((p) => +(p + (Math.random() - 0.48) * 0.4).toFixed(2));
-    }, 3000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handlePeriod = (p: string) => {
-    setActivePeriod(p);
-    setData(generateChartData(p));
-  };
-
-  return (
-    <div className="bg-surface-container-lowest border border-outline-variant p-6 rounded relative overflow-hidden">
-      {/* Controls */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-        <div className="flex gap-4">
-          {(["probability", "volume"] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`font-label-caps text-label-caps pb-1 transition-colors capitalize ${
-                activeTab === tab
-                  ? "text-primary border-b-2 border-primary"
-                  : "text-on-surface-variant hover:text-primary"
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex gap-1">
-            {["1H", "1D", "1W", "ALL"].map((period) => (
-              <button
-                key={period}
-                onClick={() => handlePeriod(period)}
-                className={`px-3 py-1 rounded font-label-caps text-label-caps transition-all ${
-                  activePeriod === period
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-surface-container text-on-surface-variant hover:bg-surface-container-high"
-                }`}
-              >
-                {period}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-1.5 px-2 py-1 bg-surface-container rounded border border-outline-variant">
-            <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse" />
-            <span className="font-data-mono text-[11px] text-secondary font-bold">
-              LIVE: {liveProb.toFixed(2)}%
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Legend */}
-      <div className="flex items-center gap-4 mb-4">
-        <div className="flex items-center gap-1.5">
-          <span className="w-3 h-0.5 bg-secondary rounded-full inline-block" />
-          <span className="font-label-caps text-[10px] text-on-surface-variant">YES</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="w-3 h-0.5 bg-tertiary rounded-full inline-block" />
-          <span className="font-label-caps text-[10px] text-on-surface-variant">NO</span>
-        </div>
-        {activeTab === "probability" && (
-          <div className="flex items-center gap-1.5 ml-2">
-            <span className="w-4 h-0.5 border-t-2 border-dashed border-primary inline-block" />
-            <span className="font-label-caps text-[10px] text-primary">AI ESTIMATE: 64%</span>
-          </div>
-        )}
-      </div>
-
-      {/* Chart */}
-      <div className="h-[340px] w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          {activeTab === "probability" ? (
-            <AreaChart data={data} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
-              <defs>
-                <linearGradient id="gradYes" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="#006c49" stopOpacity={0.18} />
-                  <stop offset="95%" stopColor="#006c49" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="gradNo" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="#840023" stopOpacity={0.12} />
-                  <stop offset="95%" stopColor="#840023" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#bfc8cc" strokeOpacity={0.3} />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 10, fill: "#6f797c", fontFamily: "var(--font-geist-sans)" }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis
-                domain={[0, 100]}
-                tickFormatter={(v) => `${v}%`}
-                tick={{ fontSize: 10, fill: "#6f797c", fontFamily: "var(--font-geist-sans)" }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <Tooltip content={<CustomTooltip />} />
-              <ReferenceLine
-                y={64}
-                stroke="#004655"
-                strokeDasharray="6 4"
-                strokeWidth={1.5}
-                label={{ value: "AI 64%", position: "insideTopRight", fontSize: 10, fill: "#004655" }}
-              />
-              <Area
-                type="monotone"
-                dataKey="yes"
-                stroke="#006c49"
-                strokeWidth={2}
-                fill="url(#gradYes)"
-                dot={false}
-                activeDot={{ r: 4, fill: "#006c49" }}
-              />
-              <Area
-                type="monotone"
-                dataKey="no"
-                stroke="#840023"
-                strokeWidth={1.5}
-                fill="url(#gradNo)"
-                strokeDasharray="4 2"
-                dot={false}
-                activeDot={{ r: 4, fill: "#840023" }}
-              />
-            </AreaChart>
-          ) : (
-            <AreaChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
-              <defs>
-                <linearGradient id="gradVol" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="#004655" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="#004655" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#bfc8cc" strokeOpacity={0.3} />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 10, fill: "#6f797c", fontFamily: "var(--font-geist-sans)" }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis
-                tickFormatter={(v) => `$${(v / 1_000_000).toFixed(1)}M`}
-                tick={{ fontSize: 10, fill: "#6f797c", fontFamily: "var(--font-geist-sans)" }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <Tooltip
-                formatter={(v) => [`$${(Number(v) / 1000).toFixed(0)}K`, "Volume"]}
-                contentStyle={{ background: "#0b1c30", border: "none", borderRadius: 4, fontSize: 11 }}
-                labelStyle={{ color: "#6f797c" }}
-                itemStyle={{ color: "#8bd1e8" }}
-              />
-              <Area
-                type="monotone"
-                dataKey="volume"
-                stroke="#004655"
-                strokeWidth={2}
-                fill="url(#gradVol)"
-                dot={false}
-                activeDot={{ r: 4, fill: "#004655" }}
-              />
-            </AreaChart>
-          )}
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-};
+const DEPTH_FIXTURE = {
+  reserve_yes: 500_000_0000000n,
+  reserve_no: 500_000_0000000n,
+  fee_bps: 30,
+  sets_minted: 0n,
+} as const;
 
 const MarketDepth = () => {
   return (
     <div className="bg-surface-container-lowest border border-outline-variant p-6 rounded h-full">
-      <h3 className="font-label-caps text-label-caps text-on-surface-variant mb-4 uppercase tracking-widest">Market Depth</h3>
-      <div className="h-48 flex items-end gap-[2px]">
-        <div className="flex-1 bg-secondary opacity-20 h-[30%]"></div>
-        <div className="flex-1 bg-secondary opacity-30 h-[45%]"></div>
-        <div className="flex-1 bg-secondary opacity-50 h-[60%]"></div>
-        <div className="flex-1 bg-secondary opacity-80 h-[85%]"></div>
-        <div className="w-[1px] bg-outline mx-2 h-full opacity-30"></div>
-        <div className="flex-1 bg-tertiary opacity-80 h-[75%]"></div>
-        <div className="flex-1 bg-tertiary opacity-50 h-[50%]"></div>
-        <div className="flex-1 bg-tertiary opacity-30 h-[35%]"></div>
-        <div className="flex-1 bg-tertiary opacity-20 h-[20%]"></div>
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="font-label-caps text-label-caps text-on-surface-variant uppercase tracking-widest">Market Depth</h3>
+        <DemoBadge />
       </div>
-      <div className="flex justify-between mt-4 font-data-mono text-[10px] text-on-surface-variant">
-        <span>$0.62</span>
-        <span>$0.64</span>
-        <span>$0.66</span>
-      </div>
+      <p className="font-data-mono text-[10px] text-on-surface-variant mb-4">
+        Fixture reserves — no market id on this page yet.
+      </p>
+      <DepthChart market={DEPTH_FIXTURE} />
     </div>
   );
 };
@@ -292,8 +114,8 @@ const AIConfidenceInterval = () => {
       <h3 className="font-label-caps text-label-caps text-on-surface-variant mb-6 uppercase tracking-widest">AI Confidence Interval</h3>
       <div className="relative py-4">
         <div className="h-1 bg-outline-variant w-full rounded-full"></div>
-        <div className="absolute top-1/2 -translate-y-1/2 left-[58%] right-[32%] h-3 bg-primary-container/40 rounded-full border-x-2 border-primary"></div>
-        <div className="absolute top-1/2 -translate-y-1/2 left-[64%] w-4 h-4 bg-primary rounded-full border-2 border-white shadow-sm"></div>
+        <div className="absolute top-1/2 -translate-y-1/2 start-[58%] end-[32%] h-3 bg-primary-container/40 rounded-full border-x-2 border-primary"></div>
+        <div className="absolute top-1/2 -translate-y-1/2 start-[64%] w-4 h-4 bg-primary rounded-full border-2 border-white shadow-sm"></div>
       </div>
       <div className="flex justify-between mt-4">
         <div className="text-center">
@@ -329,14 +151,14 @@ const RecentActivity = () => {
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-left font-data-mono text-body-md">
+        <table className="w-full text-start font-data-mono text-body-md">
           <thead>
             <tr className="border-b border-outline-variant bg-surface-container-low">
               <th className="px-6 py-3 font-label-caps text-on-surface-variant">SIDE</th>
               <th className="px-6 py-3 font-label-caps text-on-surface-variant">PRICE</th>
               <th className="px-6 py-3 font-label-caps text-on-surface-variant">SHARES</th>
               <th className="px-6 py-3 font-label-caps text-on-surface-variant">TOTAL</th>
-              <th className="px-6 py-3 font-label-caps text-on-surface-variant text-right">TIME</th>
+              <th className="px-6 py-3 font-label-caps text-on-surface-variant text-end">TIME</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-outline-variant">
@@ -346,7 +168,7 @@ const RecentActivity = () => {
                 <td className="px-6 py-4">{activity.price}</td>
                 <td className="px-6 py-4">{activity.shares}</td>
                 <td className="px-6 py-4 font-bold text-on-surface">{activity.total}</td>
-                <td className="px-6 py-4 text-right text-on-surface-variant">{activity.time}</td>
+                <td className="px-6 py-4 text-end text-on-surface-variant">{activity.time}</td>
               </tr>
             ))}
           </tbody>
@@ -378,7 +200,7 @@ const TradeExecution = () => {
                 value={amount}
                 onChange={(e) => setAmount(Number(e.target.value))}
               />
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant font-bold cursor-pointer">MAX</span>
+              <span className="absolute end-4 top-1/2 -translate-y-1/2 text-on-surface-variant font-bold cursor-pointer">MAX</span>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -416,10 +238,10 @@ const TradeExecution = () => {
             BUY YES
           </button>
           <Link 
-            href="/copy-trade?marketId=MKT-9204"
+            href={routes.copyTrade({ marketId: asDemoId("MKT-9204") })}
             className="w-full bg-primary-container text-on-primary-container py-3 rounded-xl font-label-caps text-label-caps flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
           >
-            <span className="material-symbols-outlined text-[18px]">content_copy</span>
+            <Icon name="content_copy" className="text-[18px]" />
             COPY AI TRADE
           </Link>
         </div>
@@ -431,7 +253,7 @@ const TradeExecution = () => {
             <div className="p-6 border-b border-outline-variant flex justify-between items-center bg-surface-container-low">
               <h2 className="font-headline-sm text-headline-sm text-on-surface">Execution Terminal</h2>
               <button onClick={() => setIsTerminalOpen(false)} className="text-on-surface-variant hover:text-on-surface">
-                <span className="material-symbols-outlined">close</span>
+                <Icon name="close" />
               </button>
             </div>
             <div className="p-6 space-y-6">
@@ -457,29 +279,29 @@ const OracleInsights = () => {
   return (
     <div className="bg-[#f0f9fa] border border-primary/20 rounded-xl overflow-hidden">
       <div className="bg-primary/5 px-6 py-4 border-b border-primary/10 flex items-center gap-3">
-        <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>psychology</span>
+        <Icon name="psychology" filled className="text-primary" />
         <h3 className="font-headline-sm text-headline-sm text-primary">Oracle Insights</h3>
       </div>
       <div className="p-6 space-y-8 relative">
-        <div className="absolute left-[33px] top-8 bottom-8 w-[2px] bg-primary/10"></div>
-        <div className="relative pl-10">
-          <div className="absolute left-0 top-1 w-4 h-4 rounded-full bg-primary border-4 border-[#f0f9fa] z-10"></div>
+        <div className="absolute start-[33px] top-8 bottom-8 w-[2px] bg-primary/10"></div>
+        <div className="relative ps-10">
+          <div className="absolute start-0 top-1 w-4 h-4 rounded-full bg-primary border-4 border-[#f0f9fa] z-10"></div>
           <p className="font-label-caps text-[10px] text-primary/70 mb-1">RECENT • 2H AGO</p>
           <h4 className="font-body-lg font-bold text-on-background mb-2">Hawkish Sentiment Surge</h4>
           <p className="text-on-surface-variant leading-relaxed">
             Natural language processing of latest FOMC minutes indicates a 12% shift toward hawkish positioning. Market is underpricing persistent inflation data.
           </p>
         </div>
-        <div className="relative pl-10">
-          <div className="absolute left-0 top-1 w-4 h-4 rounded-full bg-outline-variant border-4 border-[#f0f9fa] z-10"></div>
+        <div className="relative ps-10">
+          <div className="absolute start-0 top-1 w-4 h-4 rounded-full bg-outline-variant border-4 border-[#f0f9fa] z-10"></div>
           <p className="font-label-caps text-[10px] text-on-surface-variant mb-1">STABLE • 1D AGO</p>
           <h4 className="font-body-lg font-bold text-on-background mb-2">Whale Accumulation</h4>
           <p className="text-on-surface-variant leading-relaxed">
             Three institutional-grade wallets have entered large &apos;YES&apos; positions totaling $1.2M. Historically, this signature precedes a 5% price appreciation.
           </p>
         </div>
-        <div className="relative pl-10">
-          <div className="absolute left-0 top-1 w-4 h-4 rounded-full bg-outline-variant border-4 border-[#f0f9fa] z-10"></div>
+        <div className="relative ps-10">
+          <div className="absolute start-0 top-1 w-4 h-4 rounded-full bg-outline-variant border-4 border-[#f0f9fa] z-10"></div>
           <p className="font-label-caps text-[10px] text-on-surface-variant mb-1">LEGACY • 3D AGO</p>
           <h4 className="font-body-lg font-bold text-on-background mb-2">Initial Market Seeding</h4>
           <p className="text-on-surface-variant leading-relaxed">
@@ -551,7 +373,9 @@ export default function MarketDetail() {
         <div className="grid grid-cols-12 gap-gutter">
           {/* Left Column */}
           <div className="col-span-12 lg:col-span-8 space-y-gutter">
-            <ProbabilityChart />
+            <Suspense fallback={<MarketPriceSkeleton />}>
+              <MarketPriceSection />
+            </Suspense>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter">
               <MarketDepth />

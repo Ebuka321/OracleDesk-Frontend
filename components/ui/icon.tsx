@@ -1,0 +1,205 @@
+import type { SVGProps } from "react";
+import {
+  Activity,
+  AlertCircle,
+  AlertTriangle,
+  ArrowDown,
+  ArrowDownLeft,
+  ArrowLeft,
+  ArrowLeftRight,
+  ArrowRight,
+  ArrowUp,
+  ArrowUpRight,
+  Award,
+  BadgeCheck,
+  Ban,
+  Banknote,
+  BarChart3,
+  Bell,
+  BellRing,
+  Bitcoin,
+  Bot,
+  Brain,
+  BrainCircuit,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  CircleDollarSign,
+  ClipboardCheck,
+  Clock,
+  CloudOff,
+  Code,
+  Coins,
+  Computer,
+  Copy,
+  Download,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Filter,
+  Gem,
+  Globe,
+  History,
+  Hourglass,
+  Info,
+  Landmark,
+  Layers,
+  LineChart,
+  Link as LinkIcon,
+  Lock,
+  LogOut,
+  Menu,
+  Network,
+  Plus,
+  PlusCircle,
+  RefreshCw,
+  Rocket,
+  Scale,
+  Scroll,
+  Search,
+  SearchX,
+  Settings,
+  Shield,
+  ShieldCheck,
+  ShoppingCart,
+  Sliders,
+  Sparkles,
+  Store,
+  Target,
+  Terminal,
+  TrendingDown,
+  TrendingUp,
+  Trophy,
+  Unlock,
+  Wallet,
+  X,
+  XCircle,
+  Zap,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+
+export const ICONS = {
+  account_balance: Landmark,
+  account_balance_wallet: Wallet,
+  activity: Activity,
+  add: Plus,
+  add_circle: PlusCircle,
+  analytics: BarChart3,
+  arrow_back: ArrowLeft,
+  arrow_downward: ArrowDown,
+  arrow_forward: ArrowRight,
+  arrow_upward: ArrowUp,
+  auto_awesome: Sparkles,
+  balance: Scale,
+  block: Ban,
+  bolt: Zap,
+  cancel: XCircle,
+  check: Check,
+  check_circle: CheckCircle2,
+  chevron_right: ChevronRight,
+  close: X,
+  cloud_off: CloudOff,
+  code: Code,
+  computer: Computer,
+  content_copy: Copy,
+  currency_bitcoin: Bitcoin,
+  diamond: Gem,
+  download: Download,
+  error: AlertCircle,
+  expand_less: ChevronUp,
+  expand_more: ChevronDown,
+  fact_check: ClipboardCheck,
+  filter_list: Filter,
+  history: History,
+  history_edu: Scroll,
+  hourglass_top: Hourglass,
+  hub: Network,
+  info: Info,
+  insights: LineChart,
+  layers: Layers,
+  link: LinkIcon,
+  lock: Lock,
+  lock_open: Unlock,
+  logout: LogOut,
+  menu: Menu,
+  monetization_on: CircleDollarSign,
+  monitoring: LineChart,
+  neurology: BrainCircuit,
+  north_east: ArrowUpRight,
+  notifications: Bell,
+  notifications_active: BellRing,
+  open_in_new: ExternalLink,
+  payments: Banknote,
+  pending: Clock,
+  policy: Scroll,
+  psychology: Brain,
+  public: Globe,
+  query_stats: TrendingUp,
+  rocket_launch: Rocket,
+  search: Search,
+  search_off: SearchX,
+  settings: Settings,
+  settings_input_component: Sliders,
+  shield: Shield,
+  shopping_cart: ShoppingCart,
+  smart_toy: Bot,
+  south_west: ArrowDownLeft,
+  sports_basketball: Trophy,
+  store: Store,
+  swap_horiz: ArrowLeftRight,
+  sync: RefreshCw,
+  target: Target,
+  terminal: Terminal,
+  token: Coins,
+  trending_down: TrendingDown,
+  trending_up: TrendingUp,
+  verified: BadgeCheck,
+  verified_user: ShieldCheck,
+  visibility: Eye,
+  visibility_off: EyeOff,
+  warning: AlertTriangle,
+  find_match: Search,
+  workspace_premium: Award,
+} as const;
+
+export type IconName = keyof typeof ICONS;
+
+export interface IconProps extends Omit<SVGProps<SVGSVGElement>, "name"> {
+  name: IconName;
+  label?: string;
+  filled?: boolean;
+  /**
+   * Mirror horizontally in RTL (`rtl:-scale-x-100`).
+   * Use for navigation-direction icons (`chevron_right`, `arrow_forward`, `arrow_back`).
+   * Do NOT use for value/flow-semantics icons (`trending_up`, `trending_down`, `north_east`, `south_west`).
+   */
+  mirror?: boolean;
+  className?: string;
+}
+
+export function Icon({
+  name,
+  label,
+  filled,
+  mirror,
+  className,
+  ...rest
+}: IconProps) {
+  const C = ICONS[name];
+  if (!C) {
+    return null;
+  }
+  return (
+    <C
+      aria-hidden={label ? undefined : true}
+      aria-label={label}
+      role={label ? "img" : undefined}
+      focusable="false"
+      className={cn("inline-block shrink-0 size-[1em]", mirror && "rtl:-scale-x-100", className)}
+      fill={filled ? "currentColor" : "none"}
+      {...rest}
+    />
+  );
+}

@@ -1,0 +1,306 @@
+/**
+ * Runs the wallet state machine: holds the current state, feeds events to
+ * `transition`, and carries out the effects it returns against a kit adapter.
+ * No React here, so tests can drive it with a scripted adapter. WalletProvider
+ * subscribes to it with useSyncExternalStore.
+ */
+import { transition, initialWalletState, viewOf, type WalletEffect, type WalletEvent, type WalletState } from "./wallet-machine";
+import type { WalletKitAdapter } from "./wallet-kit-adapter";
+import type { SyncMessage } from "@/lib/api/cross-tab-sync";
+
+export interface WalletInterpreterDeps {
+  /** Re-probes the wallet and returns a validator for a late signature. */
+  beforeSign?: (address: string) => Promise<() => void>;
+  /** Loads the kit. Called once, on start (browser only). */
+  loadKit: () => Promise<WalletKitAdapter>;
+  storedSessionWallet: () => string | null;
+  clearBackendSession: () => void;
+  /** Runs the backend challenge login for `address`; resolves with the wallet it signed in as. */
+  signIn: (
+    address: string,
+    signTransaction: WalletKitAdapter["signTransaction"],
+    isCurrent?: () => boolean,
+    opts?: {
+      signal?: AbortSignal;
+      onProgress?: (p: { step: "challenge" | "pow" | "sign" | "verify"; powProgress?: number }) => void;
+    },
+  ) => Promise<string>;
+  purgeStellarQueries: () => void;
+  navigate: (to: string) => void;
+  /** Turns a thrown value into a plain message. */
+  describe: (err: unknown) => { kind: string; message: string };
+  /** Tells other tabs that this tab's wallet disconnected. */
+  broadcastDisconnect: () => void;
+}
+
+export class WalletInterpreter {
+  private state: WalletState = initialWalletState;
+  private readonly listeners = new Set<() => void>();
+  private readonly ensureWaiters: Array<(ok: boolean) => void> = [];
+  private readonly connectWaiters: Array<(ok: boolean) => void> = [];
+  private kitPromise: Promise<WalletKitAdapter> | null = null;
+  private started = false;
+  /** Bumped on every start and stop, so a late kit load from an old run is ignored. */
+  private generation = 0;
+  private unsubscribeKit: Array<() => void> = [];
+  private activeSignInAbort: AbortController | null = null;
+
+  constructor(private readonly deps: WalletInterpreterDeps) {}
+
+  getState = (): WalletState => this.state;
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+
+  /** Loads the kit, subscribes to its events and restores a session. Returns the teardown. */
+  start = (): (() => void) => {
+    if (this.started) return this.stop;
+    this.started = true;
+    const generation = ++this.generation;
+    this.kit().then(
+      (kit) => {
+        if (generation !== this.generation) return;
+        this.unsubscribeKit = [
+          kit.onStateUpdated(({ address, passphrase }) =>
+            this.send({
+              type: "KIT_STATE_UPDATED",
+              address,
+              passphrase,
+              storedSessionWallet: this.deps.storedSessionWallet(),
+            }),
+          ),
+          kit.onDisconnect(() => {
+            this.deps.broadcastDisconnect();
+            this.send({ type: "KIT_DISCONNECTED" });
+          }),
+        ];
+        this.send({ type: "KIT_LOADED" });
+      },
+      (err) => this.send({ type: "KIT_FAILED", error: this.deps.describe(err).message }),
+    );
+    return this.stop;
+  };
+
+  stop = (): void => {
+    this.activeSignInAbort?.abort();
+    this.activeSignInAbort = null;
+    this.generation++;
+    this.started = false;
+    this.unsubscribeKit.forEach((fn) => fn());
+    this.unsubscribeKit = [];
+  };
+
+  send = (event: WalletEvent): void => {
+    if (
+      event.type === "DISCONNECT_REQUESTED" ||
+      event.type === "KIT_DISCONNECTED" ||
+      event.type === "KIT_STATE_UPDATED"
+    ) {
+      this.activeSignInAbort?.abort();
+      this.activeSignInAbort = null;
+    }
+    const next = transition(this.state, event);
+    this.state = next.state;
+    this.listeners.forEach((fn) => fn());
+    for (const effect of next.effects) this.run(effect);
+  };
+
+  /**
+   * Applies a change made in another tab. These never broadcast back, so two
+   * tabs cannot ping-pong messages.
+   */
+  applyCrossTab = (msg: SyncMessage): void => {
+    switch (msg.type) {
+      case "wallet_disconnected":
+        this.send({ type: "KIT_DISCONNECTED" });
+        return;
+      case "wallet_changed":
+        if (msg.address && msg.address !== this.deps.storedSessionWallet()) {
+          this.send({ type: "KIT_STATE_UPDATED", address: msg.address, passphrase: null, storedSessionWallet: this.deps.storedSessionWallet() });
+        }
+        return;
+      case "auth_session_changed":
+        this.send({ type: "SESSION_SYNCED", wallet: msg.address || this.deps.storedSessionWallet() });
+        return;
+    }
+  };
+
+  /** Resolves once the backend session is established for the current account. */
+  ensureSession = (): Promise<boolean> =>
+    new Promise((resolve) => {
+      this.ensureWaiters.push(resolve);
+      this.send({ type: "ENSURE_SESSION" });
+    });
+
+  /** Resolves true when a wallet is connected by the time the attempt ends. */
+  openModal = (returnTo: string | null): Promise<boolean> =>
+    new Promise((resolve) => {
+      this.connectWaiters.push(resolve);
+      this.send({ type: "CONNECT_REQUESTED", returnTo });
+    });
+
+  disconnect = (): void => this.send({ type: "DISCONNECT_REQUESTED" });
+
+  /** Signs with the connected kit; used by the signer the provider exposes. */
+  signTransaction = async (xdr: string, opts: { networkPassphrase: string; address: string }) => {
+    const epoch = this.state.epoch;
+    const assertAccount = () => {
+      if (this.state.epoch !== epoch || viewOf(this.state).address !== opts.address) throw new Error("Your wallet changed before signing completed.");
+    };
+    assertAccount();
+    const validate = await this.deps.beforeSign?.(opts.address);
+    assertAccount();
+    const result = await (await this.kit()).signTransaction(xdr, opts);
+    validate?.();
+    // Kit 2.5 has no network-change event. Probe again to catch a switch that
+    // happened inside a short prompt before the visibility timer could run.
+    const validateAfter = await this.deps.beforeSign?.(opts.address);
+    validate?.(); validateAfter?.();
+    assertAccount();
+    return result;
+  };
+
+  /** Signs a Soroban auth entry with the connected kit; rejects when the kit can't. */
+  signAuthEntry = async (authEntry: string, opts: { networkPassphrase: string; address: string }) => {
+    const epoch = this.state.epoch;
+    const assertAccount = () => {
+      if (this.state.epoch !== epoch || viewOf(this.state).address !== opts.address) throw new Error("Your wallet changed before signing completed.");
+    };
+    assertAccount();
+    const validate = await this.deps.beforeSign?.(opts.address);
+    assertAccount();
+    const kit = await this.kit();
+    if (!kit.signAuthEntry) throw new Error("This wallet can't sign Soroban authorization entries.");
+    const result = await kit.signAuthEntry(authEntry, opts);
+    validate?.();
+    const validateAfter = await this.deps.beforeSign?.(opts.address);
+    validate?.(); validateAfter?.();
+    assertAccount();
+    return result;
+  };
+
+  private kit(): Promise<WalletKitAdapter> {
+    this.kitPromise ??= this.deps.loadKit();
+    return this.kitPromise;
+  }
+
+  private run(effect: WalletEffect): void {
+    switch (effect.type) {
+      case "restore":
+        this.kit()
+          .then((kit) => kit.getAddress().then((r) => r.address, () => null))
+          .then((address) =>
+            this.send({
+              type: "RESTORED",
+              epoch: effect.epoch,
+              address,
+              storedSessionWallet: this.deps.storedSessionWallet(),
+            }),
+          );
+        return;
+
+      case "openAuthModal":
+        this.kit()
+          .then((kit) => kit.authModal())
+          .then(
+            ({ address }) =>
+              this.send({
+                type: "CONNECT_SUCCEEDED",
+                epoch: effect.epoch,
+                address,
+                storedSessionWallet: this.deps.storedSessionWallet(),
+              }),
+            (err) => {
+              const described = this.deps.describe(err);
+              // Closing the picker, or declining there, is not an error worth showing.
+              const silent = described.kind === "rejected" || /closed/i.test(String((err as { message?: string })?.message));
+              this.send({ type: "CONNECT_FAILED", epoch: effect.epoch, silent, message: described.message });
+            },
+          );
+        return;
+
+      case "queryNetwork":
+        // Some wallets can't report their network; the unknown state is fine.
+        this.kit()
+          .then((kit) => kit.getNetwork())
+          .then(
+            ({ networkPassphrase }) =>
+              this.send({ type: "NETWORK_REPORTED", epoch: effect.epoch, address: effect.address, passphrase: networkPassphrase }),
+            () => {},
+          );
+        return;
+
+      case "signIn": {
+        this.activeSignInAbort?.abort();
+        const controller = new AbortController();
+        this.activeSignInAbort = controller;
+
+        this.deps
+          .signIn(
+            effect.address,
+            (xdr, opts) => this.signTransaction(xdr, opts),
+            () => {
+              const state = this.state;
+              return (
+                state.tag === "authenticating" &&
+                state.epoch === effect.epoch &&
+                state.attempt === effect.attempt &&
+                state.address === effect.address
+              );
+            },
+            {
+              signal: controller.signal,
+              onProgress: ({ step, powProgress }) => {
+                this.send({
+                  type: "AUTH_PROGRESS",
+                  epoch: effect.epoch,
+                  attempt: effect.attempt,
+                  step,
+                  powProgress,
+                });
+              },
+            },
+          )
+          .then(
+            (wallet) => this.send({ type: "SIGNIN_SUCCEEDED", epoch: effect.epoch, attempt: effect.attempt, wallet }),
+            (err) => {
+              if (controller.signal.aborted) return;
+              this.send({
+                type: "SIGNIN_FAILED",
+                epoch: effect.epoch,
+                attempt: effect.attempt,
+                message: this.deps.describe(err).message,
+              });
+            },
+          );
+        return;
+      }
+
+      case "clearBackendSession":
+        this.deps.clearBackendSession();
+        return;
+
+      case "kitDisconnect":
+        this.kit().then((kit) => kit.disconnect()).catch(() => {});
+        return;
+
+      case "purgeStellarQueries":
+        this.deps.purgeStellarQueries();
+        return;
+
+      case "navigate":
+        this.deps.navigate(effect.to);
+        return;
+
+      case "resolveEnsure":
+        this.ensureWaiters.splice(0).forEach((resolve) => resolve(effect.ok));
+        return;
+
+      case "resolveConnect":
+        this.connectWaiters.splice(0).forEach((resolve) => resolve(effect.ok));
+        return;
+    }
+  }
+}

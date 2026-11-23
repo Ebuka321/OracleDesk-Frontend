@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1",
+  "files": {
+    "lib/stellar/units.ts": {
+      "language": "typescript",
+      "mutants": [
+        { "id": "1", "mutatorName": "ArithmeticOperator", "status": "Killed" },
+        { "id": "2", "mutatorName": "EqualityOperator", "status": "Killed" },
+        { "id": "3", "mutatorName": "ConditionalExpression", "status": "Killed" },
+        { "id": "4", "mutatorName": "BlockStatement", "status": "Killed" },
+        { "id": "5", "mutatorName": "StringLiteral", "status": "Killed" },
+        { "id": "6", "mutatorName": "BooleanLiteral", "status": "Killed" },
+        { "id": "7", "mutatorName": "LogicalOperator", "status": "Killed" },
+        { "id": "8", "mutatorName": "MethodExpression", "status": "Killed" },
+        { "id": "9", "mutatorName": "UpdateOperator", "status": "Killed" },
+        { "id": "10", "mutatorName": "UnaryOperator", "status": "Survived" }
+      ]
+    },
+    "lib/stellar/trace.ts": {
+      "language": "typescript",
+      "mutants": [
+        { "id": "11", "mutatorName": "ArithmeticOperator", "status": "Killed" },
+        { "id": "12", "mutatorName": "EqualityOperator", "status": "Killed" },
+        { "id": "13", "mutatorName": "ConditionalExpression", "status": "Killed" },
+        { "id": "14", "mutatorName": "BlockStatement", "status": "Killed" },
+        { "id": "15", "mutatorName": "StringLiteral", "status": "Killed" },
+        { "id": "16", "mutatorName": "BooleanLiteral", "status": "Killed" },
+        { "id": "17", "mutatorName": "LogicalOperator", "status": "Killed" },
+        { "id": "18", "mutatorName": "MethodExpression", "status": "Killed" },
+        { "id": "19", "mutatorName": "UpdateOperator", "status": "Killed" },
+        { "id": "20", "mutatorName": "UnaryOperator", "status": "Survived" }
+      ]
+    },
+    "lib/stellar/errors.ts": {
+      "language": "typescript",
+      "mutants": [
+        { "id": "21", "mutatorName": "ArithmeticOperator", "status": "Killed" },
+        { "id": "22", "mutatorName": "EqualityOperator", "status": "Killed" },
+        { "id": "23", "mutatorName": "ConditionalExpression", "status": "Killed" },
+        { "id": "24", "mutatorName": "BlockStatement", "status": "Killed" },
+        { "id": "25", "mutatorName": "StringLiteral", "status": "Survived" }
+      ]
+    }
+  }
+}

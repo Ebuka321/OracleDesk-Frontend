@@ -1,0 +1,122 @@
+[
+  {
+    "origin": "http://www.w3.org",
+    "reason": "SVG/XML namespace strings in generated markup; never fetched."
+  },
+  {
+    "origin": "https://www.w3.org",
+    "reason": "XML namespace documentation links in library strings; never fetched."
+  },
+  {
+    "origin": "https://stellar.org",
+    "reason": "SEP specification URLs embedded in @stellar/stellar-sdk strings; never fetched."
+  },
+  {
+    "origin": "https://developers.stellar.org",
+    "reason": "Stellar documentation links emitted in SDK error messages; never fetched."
+  },
+  {
+    "origin": "https://github.com",
+    "reason": "Repository and issue links in library error messages; never fetched."
+  },
+  {
+    "origin": "https://raw.githubusercontent.com",
+    "reason": "Source-repository strings in dependency metadata; never fetched by the app."
+  },
+  {
+    "origin": "https://soroban-testnet.stellar.org",
+    "reason": "Default Soroban RPC endpoint when NEXT_PUBLIC_STELLAR_RPC_URL is unset."
+  },
+  {
+    "origin": "https://stellar.expert",
+    "reason": "Default block explorer; opened only as an outbound link."
+  },
+  {
+    "origin": "https://ipfs.io",
+    "reason": "Default IPFS gateway used to read reasoning traces."
+  },
+  {
+    "origin": "https://dweb.link",
+    "reason": "Configured IPFS gateway pool entry used to read reasoning traces."
+  },
+  {
+    "origin": "https://gateway.pinata.cloud",
+    "reason": "Configured IPFS gateway pool entry used to read reasoning traces."
+  },
+  {
+    "origin": "https://relay.walletconnect.org",
+    "reason": "WalletConnect relay contacted only after the user opens the wallet modal."
+  },
+  {
+    "origin": "wss://relay.walletconnect.org",
+    "reason": "WalletConnect relay socket contacted only after the user opens the wallet modal."
+  },
+  {
+    "origin": "https://verify.walletconnect.org",
+    "reason": "WalletConnect verification page opened during wallet pairing."
+  },
+  {
+    "origin": "https://albedo.link",
+    "reason": "Albedo wallet signs in a popup opened after the user chooses it."
+  },
+  {
+    "origin": "https://connect.trezor.io",
+    "reason": "Trezor Connect iframe loaded only while a Trezor wallet is in use."
+  },
+  {
+    "origin": "https://suite.trezor.io",
+    "reason": "Trezor Suite link loaded only while a Trezor wallet is in use."
+  },
+  {
+    "origin": "https://cloud.reown.com",
+    "reason": "WalletConnect Cloud documentation link in .env guidance; never fetched."
+  },
+  {
+    "origin": "https://rpc.walletconnect.org",
+    "reason": "WalletConnect RPC contacted only after the user opens the wallet modal."
+  },
+  {
+    "origin": "https://secure.walletconnect.org",
+    "reason": "WalletConnect secure site used during pairing."
+  },
+  {
+    "origin": "https://verify.walletconnect.com",
+    "reason": "WalletConnect verification during pairing."
+  },
+  {
+    "origin": "https://echo.walletconnect.com",
+    "reason": "WalletConnect relay discovery during pairing."
+  },
+  {
+    "origin": "https://pulse.walletconnect.org",
+    "reason": "WalletConnect telemetry endpoint in the wallet kit; not called on page load."
+  },
+  {
+    "origin": "https://walletconnect.com",
+    "reason": "WalletConnect documentation/links in the kit."
+  },
+  {
+    "origin": "https://reown.com",
+    "reason": "Reown AppKit documentation links in the wallet kit."
+  },
+  {
+    "origin": "https://dashboard.reown.com",
+    "reason": "Reown dashboard link shown after a wallet is configured."
+  },
+  {
+    "origin": "https://app.safe.global",
+    "reason": "Safe wallet link surfaced by the wallet kit."
+  },
+  {
+    "origin": "https://oracledesk.io",
+    "reason": "Canonical public site URL string; not fetched on page load."
+  },
+  {
+    "origin": "https://stellar.creit.tech",
+    "reason": "Stellar Wallets Kit endpoint used only while connecting a wallet."
+  },
+  {
+    "origin": "https://horizon.stellar.org",
+    "reason": "Horizon endpoint embedded in the Stellar SDK; only used by explicit Horizon calls."
+  }
+]

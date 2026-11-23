@@ -1,0 +1,22 @@
+{
+  "id": "sim/market-core/nested-sac-generic",
+  "source": "simulation",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "Error",
+    "message": "HostError: Error(Contract, #4)"
+  },
+  "events": [
+    {
+      "contract": "usdc",
+      "code": 5
+    }
+  ],
+  "expect": {
+    "kind": "contract",
+    "code": "USDCError5",
+    "contract": "usdc"
+  }
+}

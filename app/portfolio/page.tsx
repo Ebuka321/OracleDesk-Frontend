@@ -1,9 +1,36 @@
 "use client";
+import { Icon } from "@/components/ui/icon";
 
-import React, { useState, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { usePortfolio, usePositions } from "@/lib/hooks/usePortfolio";
-import { formatUsdc } from "@/lib/stellar/units";
+import { useAddressPositions, useMyPositions } from "@/lib/hooks/useMyPositions";
+import { reconcileIndex } from "@/lib/stellar/wallet-market-index";
+import { useViewedAddress } from "@/lib/hooks/useViewedAddress";
+import {
+  floatUsdcToRaw,
+  formatBps,
+  formatProbability,
+  formatSignedUsdc,
+  formatUsdcDisplay,
+  ratioBps,
+} from "@/lib/format/money";
+import { useTreasuryValuation } from "@/lib/portfolio/useValuation";
+import { formatUsdc, shortAddress } from "@/lib/stellar/units";
+import { NETWORK_LABEL } from "@/lib/stellar/config";
+import deployments from "@/lib/stellar/generated/deployments.testnet.json";
+import { useWallet } from "@/lib/contexts/WalletContext";
+import { useRedeemAll, type PreparedWriteReview } from "@/lib/hooks/useStellar";
+import { shouldSkipTxReview, TxReview, TxReviewPreferenceControl } from "@/components/tx-review";
+import type { ReviewModel } from "@/lib/stellar/tx-decode";
+import { TreasuryRiskLimits } from "@/components/treasury-risk-limits";
+import { VirtualTableBody } from "@/components/ui/virtual-list";
+import { ExportHistoryDialog } from "@/components/portfolio/export-history-dialog";
+import { PendingCopyTrades } from "@/components/copy-trade/PendingCopyTrades";
+import { SourceTag } from "@/components/ui/source-tag";
+import { AddressInput } from "@/components/ui/address-input";
+import { AddressText } from "@/components/ui/address-text";
+import { knownAddresses } from "@/lib/stellar/address-book";
+import { classify, type PolicyCheckedAddress } from "@/lib/stellar/address-policy";
 
 const TerminalLog = () => {
   const [logs, setLogs] = useState([
@@ -47,9 +74,9 @@ const TerminalLog = () => {
           <div className="w-3 h-3 rounded-full bg-error"></div>
           <div className="w-3 h-3 rounded-full bg-secondary-fixed"></div>
           <div className="w-3 h-3 rounded-full bg-primary-fixed"></div>
-          <span className="font-data-mono text-[11px] text-surface-variant ml-4 uppercase tracking-widest">Transaction & Performance Log</span>
+          <span className="font-data-mono text-[11px] text-surface-variant ms-4 uppercase tracking-widest">Transaction & Performance Log</span>
         </div>
-        <span className="material-symbols-outlined text-surface-variant text-[18px]">terminal</span>
+        <Icon name="terminal" className="text-surface-variant text-[18px]" />
       </div>
       <div 
         ref={terminalRef}
@@ -73,20 +100,28 @@ interface PositionRowProps {
   side: string;
   sideColor: string;
   entry: string;
-  prob: number;
+  prob: number | null;
   yesNo: string;
   size: string;
+  exitValue: string;
+  exitSubLabel?: string;
+  cappedWarning?: string | null;
   pnl: string;
   pnlPercent: string;
   pnlColor: string;
   status: string;
   resolved?: boolean;
   claimable?: boolean;
+  ariaRowIndex?: number;
 }
 
-const PositionRow = ({ market, category, platform, side, sideColor, entry, prob, yesNo, size, pnl, pnlPercent, pnlColor, status, resolved, claimable }: PositionRowProps) => {
+const PositionRow = ({ market, category, platform, side, sideColor, entry, prob, yesNo, size, exitValue, exitSubLabel, cappedWarning, pnl, pnlPercent, pnlColor, status, resolved, claimable, ariaRowIndex }: PositionRowProps) => {
   return (
-    <tr className={`transition-colors border-b border-outline-variant hover:bg-surface-container/50 ${resolved ? 'bg-surface-container-highest' : ''}`}>
+    <tr
+      aria-rowindex={ariaRowIndex}
+      data-virtual-table-row={ariaRowIndex !== undefined ? ariaRowIndex - 2 : undefined}
+      className={`transition-colors border-b border-outline-variant hover:bg-surface-container/50 ${resolved ? 'bg-surface-container-highest' : ''}`}
+    >
       <td className="px-6 py-4 font-body-md text-on-surface max-w-xs">
         <span className="block truncate font-semibold">{market}</span>
         <span className="text-[11px] text-outline uppercase">{category} • {platform}</span>
@@ -94,34 +129,54 @@ const PositionRow = ({ market, category, platform, side, sideColor, entry, prob,
       <td className="px-4 py-4">
         <span className={`${sideColor} px-2 py-0.5 rounded text-[11px] font-bold`}>{side}</span>
       </td>
-      <td className="px-4 py-4 text-right font-data-mono">{entry}</td>
+      <td className="px-4 py-4 text-end font-data-mono">{entry}</td>
       <td className="px-4 py-4">
-        <div className="flex flex-col gap-1 w-32 mx-auto">
-          <div className="flex justify-between text-[10px] text-outline font-bold">
-            <span>{prob}%</span>
-            <span>{yesNo}</span>
+        {prob === null ? (
+          <div className="text-center font-data-mono text-outline">—</div>
+        ) : (
+          <div className="flex flex-col gap-1 w-32 mx-auto">
+            <div className="flex justify-between text-[10px] text-outline font-bold">
+              <span>{prob}%</span>
+              <span>{yesNo}</span>
+            </div>
+            <div className="h-1 bg-outline-variant rounded-full overflow-hidden relative">
+              <div 
+                className={`h-full absolute start-0 top-0 ${side === 'YES' ? 'bg-secondary' : 'bg-tertiary'}`} 
+                style={{ width: `${prob}%` }}
+              ></div>
+            </div>
           </div>
-          <div className="h-1 bg-outline-variant rounded-full overflow-hidden relative">
-            <div 
-              className={`h-full absolute left-0 top-0 ${side === 'YES' ? 'bg-secondary' : 'bg-tertiary'}`} 
-              style={{ width: `${prob}%` }}
-            ></div>
-          </div>
-        </div>
+        )}
       </td>
-      <td className="px-4 py-4 text-right font-data-mono">{size}</td>
-      <td className="px-4 py-4 text-right font-data-mono">
+      <td className="px-4 py-4 text-end font-data-mono">
+        <div>{size}</div>
+        <div className="text-[10px] text-outline">Backend record</div>
+      </td>
+      <td className="px-4 py-4 text-end font-data-mono">
+        <div className="font-semibold text-on-surface">{exitValue}</div>
+        {exitSubLabel && <div className="text-[10px] text-outline">{exitSubLabel}</div>}
+        {cappedWarning && (
+          <span
+            role="status"
+            className="mt-1 inline-block rounded bg-error-container px-1.5 py-0.5 text-[10px] font-bold text-tertiary-container"
+          >
+            {cappedWarning}
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-4 text-end font-data-mono">
         <div className={`${pnlColor} font-bold`}>{pnl}</div>
         <div className={`text-[11px] ${pnlColor === 'text-secondary' ? 'text-secondary-container bg-on-secondary-fixed-variant' : 'text-tertiary-container bg-error-container'} px-1 rounded inline-block`}>
           {pnlPercent}
         </div>
+        <div className="text-[10px] text-outline">Backend record</div>
       </td>
       <td className="px-4 py-4 text-center">
         <span className={`text-[10px] ${resolved ? 'bg-on-background text-surface' : 'bg-primary-container text-on-primary-container'} px-2 py-0.5 rounded-full uppercase`}>
           {status}
         </span>
       </td>
-      <td className="px-6 py-4 text-right space-x-2">
+      <td className="px-6 py-4 text-end space-x-2">
         {claimable ? (
           <button 
             className="bg-secondary text-primary-foreground px-3 py-1 rounded font-label-caps text-[10px] uppercase shadow-sm active:scale-95 transition-transform"
@@ -152,55 +207,418 @@ const PositionRow = ({ market, category, platform, side, sideColor, entry, prob,
 
 export default function PortfolioPage() {
   const [status, setStatus] = useState<"OPEN" | "CLOSED">("OPEN");
+  const [exportOpen, setExportOpen] = useState(false);
+  const wallet = useWallet();
+  const redeemBatch = useRedeemAll();
+  const [reviewModel, setReviewModel] = useState<{ model: ReviewModel; changedFrom?: ReviewModel } | null>(null);
+  const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
   const { data: summary, isLoading: isSummaryLoading } = usePortfolio();
   const { data: positionsData, isLoading: isPositionsLoading } = usePositions({ status });
   const positions = positionsData?.positions ?? [];
+  const rawTreasuryValuation = useTreasuryValuation(positions);
+  const treasuryValuation = {
+    ...rawTreasuryValuation,
+    basis: rawTreasuryValuation.mode,
+    setBasis: rawTreasuryValuation.setMode,
+  };
+  const { viewed, isWatching, pendingWatch, confirmPendingWatch, dismissPendingWatch, setWatch, clearWatch } = useViewedAddress();
+  const [watchInput, setWatchInput] = useState("");
+  const [validatedWatch, setValidatedWatch] = useState<PolicyCheckedAddress | null>(null);
+  const known = knownAddresses(wallet.address);
+  const activeHolder = viewed ?? wallet.address;
+  const addressPositions = useAddressPositions(activeHolder);
+  const myPositions = useMyPositions();
+  const [reconcileProgress, setReconcileProgress] = useState<{ scanned: number; total: number } | null>(null);
+  const reconcileAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!activeHolder || !addressPositions.totalMarkets || addressPositions.coverage?.complete) {
+      setReconcileProgress(null);
+      return;
+    }
+    const controller = new AbortController();
+    reconcileAbortRef.current = controller;
+    void reconcileIndex(activeHolder, addressPositions.totalMarkets, {
+      signal: controller.signal,
+      onProgress: (scanned, total) => setReconcileProgress({ scanned, total }),
+    }).catch(() => {});
+
+    return () => {
+      controller.abort();
+    };
+  }, [activeHolder, addressPositions.totalMarkets, addressPositions.coverage?.complete]);
+  const currentRedeemIds = new Set(redeemBatch.discovery?.redeemables.map((item) => item.marketId.toString()) ?? []);
+  const currentRedeemed = redeemBatch.discovery?.redeemables.filter(
+    (item) => redeemBatch.states[item.marketId.toString()]?.s === "redeemed",
+  ) ?? [];
+  const expectedRedeemTotal = redeemBatch.discovery?.redeemables.reduce((total, item) => total + item.expectedPayout, 0n) ?? 0n;
+  const redeemedPayoutTotal = currentRedeemed.reduce(
+    (total, item) => {
+      const state = redeemBatch.states[item.marketId.toString()];
+      return total + (state?.s === "redeemed" ? state.payout : 0n);
+    },
+    0n,
+  );
+  const resumedItems = Object.entries(redeemBatch.states).filter(([id, item]) =>
+    !currentRedeemIds.has(id) && (item.s === "redeemed" || item.s === "failed" || item.s === "skipped"),
+  );
+  const reviewRedeem = useCallback<PreparedWriteReview>(async (_prepared, model, changedFrom, forceReview = false) => {
+    if (!forceReview && shouldSkipTxReview()) return true;
+    return new Promise<boolean>((resolve) => {
+      reviewResolver.current = resolve;
+      setReviewModel({ model, changedFrom });
+    });
+  }, []);
+  const closeReview = useCallback((approved: boolean) => {
+    setReviewModel(null);
+    const resolve = reviewResolver.current;
+    reviewResolver.current = null;
+    resolve?.(approved);
+  }, []);
+
+  useEffect(
+    () => () => {
+      const resolve = reviewResolver.current;
+      reviewResolver.current = null;
+      resolve?.(false);
+    },
+    [],
+  );
 
   return (
     <main className="max-w-container-max-width mx-auto px-gutter py-8">
+      <PendingCopyTrades />
       {/* Portfolio Header / Summary */}
       <section className="mb-8 flex flex-col md:flex-row justify-between items-end gap-6">
         <div>
           <h1 className="font-display-lg text-display-lg text-on-background mb-1">Portfolio Performance</h1>
-          <p className="font-body-md text-body-md text-on-surface-variant">Institutional grade overview of your prediction market exposure.</p>
+          <p className="font-body-md text-body-md text-on-surface-variant">
+            The figures below summarise the OracleDesk agent&apos;s book. Your own wallet holdings are listed under
+            &ldquo;My positions&rdquo;.
+          </p>
         </div>
         <div className="flex flex-wrap gap-4">
           <div className="bg-white border border-outline-variant p-4 rounded min-w-[160px] shadow-sm">
-            <div className="font-label-caps text-label-caps text-outline mb-1">EQUITY (USDC)</div>
+            <div className="font-label-caps text-label-caps text-outline mb-1">EQUITY (AGENT BOOK, USDC)</div>
             <div className="font-headline-sm text-headline-sm text-on-background">
-              {isSummaryLoading ? "..." : `$${summary?.totalUsdc.toLocaleString()}`}
+              {isSummaryLoading
+                ? "..."
+                : (() => {
+                    const raw = floatUsdcToRaw(summary?.totalUsdc);
+                    return raw !== null ? formatUsdcDisplay(raw) : "—";
+                  })()}
             </div>
+            <div className="text-[10px] font-bold text-on-surface-variant mt-1">Backend record of the agent&apos;s holdings</div>
             <div className={`text-[12px] font-bold ${(summary?.dailyPnl ?? 0) >= 0 ? 'text-secondary' : 'text-tertiary'} flex items-center gap-1 mt-1`}>
-              <span className="material-symbols-outlined text-[14px]">
-                {(summary?.dailyPnl ?? 0) >= 0 ? 'arrow_upward' : 'arrow_downward'}
-              </span> 
-              {isSummaryLoading ? "0.0%" : `${Math.abs(summary?.dailyPnl ?? 0).toFixed(2)}%`}
+              <Icon
+                name={(summary?.dailyPnl ?? 0) >= 0 ? 'arrow_upward' : 'arrow_downward'}
+                className="text-[14px]"
+              /> 
+              {isSummaryLoading
+                ? "..."
+                : (() => {
+                    const raw = floatUsdcToRaw(summary?.dailyPnl);
+                    return raw !== null ? `${formatSignedUsdc(raw)} today (backend record)` : "—";
+                  })()}
+            </div>
+          </div>
+
+          <div
+            className="bg-white border border-outline-variant p-4 rounded min-w-[200px] shadow-sm"
+            title="What selling everything now would return after price impact and fees"
+          >
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="font-label-caps text-label-caps text-outline">
+                {treasuryValuation.basis === "exit" ? "EXIT VALUE (ON-CHAIN)" : "MID VALUE (ON-CHAIN)"}
+              </span>
+              <div className="inline-flex rounded border border-outline-variant bg-surface-container p-0.5 text-[10px] font-label-caps">
+                <button
+                  type="button"
+                  aria-pressed={treasuryValuation.basis === "exit"}
+                  onClick={() => treasuryValuation.setBasis("exit")}
+                  className={`rounded px-1.5 py-0.5 transition-colors ${treasuryValuation.basis === "exit" ? "bg-white font-bold text-primary shadow-sm" : "text-on-surface-variant"}`}
+                >
+                  Exit
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={treasuryValuation.basis === "mid"}
+                  onClick={() => treasuryValuation.setBasis("mid")}
+                  className={`rounded px-1.5 py-0.5 transition-colors ${treasuryValuation.basis === "mid" ? "bg-white font-bold text-primary shadow-sm" : "text-on-surface-variant"}`}
+                >
+                  Mid
+                </button>
+              </div>
+            </div>
+            <div className="font-headline-sm text-headline-sm text-on-background">
+              {treasuryValuation.isLoading ? "..." : formatUsdcDisplay(treasuryValuation.activeTotalRaw)}
+            </div>
+            <div className="text-[10px] font-bold text-on-surface-variant mt-1">
+              What selling everything now would return after price impact and fees
             </div>
           </div>
           
           <div className="bg-white border border-outline-variant p-4 rounded min-w-[160px] shadow-sm">
             <div className="font-label-caps text-label-caps text-outline mb-1">TREASURY CAPITAL</div>
             <div className="font-headline-sm text-headline-sm text-secondary">
-              {isSummaryLoading ? "..." : summary?.availableCapitalRaw ? `${formatUsdc(BigInt(summary.availableCapitalRaw), { maxDecimals: 2, grouping: true })} USDC` : "—"}
+              {isSummaryLoading ? "..." : summary?.availableCapitalRaw ? formatUsdcDisplay(BigInt(summary.availableCapitalRaw)) : "—"}
             </div>
             <div className="text-[10px] font-bold text-on-surface-variant mt-1">Read live from the treasury contract</div>
           </div>
 
           <div className="bg-white border border-outline-variant p-4 rounded min-w-[160px] shadow-sm">
-            <div className="font-label-caps text-label-caps text-outline mb-1">ACTIVE POSITIONS</div>
+            <div className="font-label-caps text-label-caps text-outline mb-1">AGENT POSITIONS</div>
             <div className="font-headline-sm text-headline-sm text-on-background">
               {isSummaryLoading ? "..." : summary?.openPositions}
             </div>
-            <div className="text-[12px] font-medium text-on-surface-variant mt-1">Managed by OracleDesk</div>
+            <div className="text-[12px] font-medium text-on-surface-variant mt-1">Open positions the agent manages</div>
           </div>
         </div>
+      </section>
+
+      {/* Per-address on-chain positions (issue #141 & #50), read from ledger entries */}
+      <section className="mb-8" aria-labelledby="address-positions-title">
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 id="address-positions-title" className="font-headline-sm text-headline-sm text-on-background">
+                Positions for {activeHolder ? shortAddress(activeHolder, 6, 4) : "Address"}
+              </h2>
+              {isWatching && (
+                <span className="rounded-full bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
+                  Watching
+                </span>
+              )}
+              {activeHolder && activeHolder === deployments.agent && (
+                <span className="rounded-full bg-secondary/10 text-secondary border border-secondary/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
+                  Treasury Agent
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] font-medium text-on-surface-variant">
+              Read directly from market-core ledger entries on Stellar Testnet · not the agent&apos;s book
+            </p>
+          </div>
+          {wallet.isConnected && activeHolder === wallet.address && (
+            <button
+              type="button"
+              onClick={() => setExportOpen(true)}
+              className="inline-flex items-center gap-2 rounded border border-outline-variant bg-white px-4 py-2 text-xs font-label-caps font-bold text-primary shadow-sm hover:bg-surface-container-low"
+            >
+              <Icon name="download" className="text-[16px]" />
+              Export my history
+            </button>
+          )}
+        </div>
+
+        {/* External ?watch= interstitial */}
+        {pendingWatch && (
+          <div
+            role="region"
+            aria-label="Confirm watched address"
+            className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-2"
+          >
+            <p className="text-xs font-bold text-on-surface">
+              This link asks to watch a Stellar address:
+            </p>
+            <div className="text-xs">
+              <AddressText address={pendingWatch} />
+            </div>
+            {classify(pendingWatch, known, { expect: "any" }).some((f) => f.kind === "lookalike") && (
+              <p className="text-xs font-bold text-error">
+                Warning: this address looks similar to a known counterparty.
+              </p>
+            )}
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={confirmPendingWatch}
+                className="bg-primary text-primary-foreground px-3 py-1.5 rounded text-xs font-bold"
+              >
+                View
+              </button>
+              <button
+                type="button"
+                onClick={dismissPendingWatch}
+                className="border border-outline-variant bg-white px-3 py-1.5 rounded text-xs font-medium"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Address Input & Quick Picks */}
+        <div className="bg-surface-container-low border border-outline-variant rounded-xl p-4 mb-4">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!validatedWatch) return;
+              if (setWatch(validatedWatch, { internal: true })) {
+                setWatchInput("");
+                setValidatedWatch(null);
+              }
+            }}
+            className="flex flex-col sm:flex-row items-start gap-2 mb-3"
+          >
+            <div className="flex-1 w-full">
+              <AddressInput
+                value={watchInput}
+                onChange={setWatchInput}
+                onValidated={setValidatedWatch}
+                policy="watch"
+                expect="any"
+                known={known}
+                placeholder="Watch an address (G... or C...)"
+                ariaLabel="Watch an address"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={!validatedWatch}
+              className="bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-bold font-label-caps hover:brightness-110 transition-all shrink-0 disabled:opacity-50"
+            >
+              Watch
+            </button>
+          </form>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-[11px] text-on-surface-variant font-medium">Quick picks:</span>
+            {wallet.isConnected && wallet.address && (
+              <button
+                type="button"
+                onClick={() => { if (wallet.address) setWatch(wallet.address, { internal: true }); }}
+                className={`px-2.5 py-1 rounded border text-xs transition-colors ${
+                  activeHolder === wallet.address && !isWatching
+                    ? "bg-primary text-primary-foreground border-primary font-bold"
+                    : "bg-white border-outline-variant hover:border-primary text-on-surface"
+                }`}
+              >
+                My Wallet ({shortAddress(wallet.address, 4, 4)})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setWatch(deployments.agent)}
+              className={`px-2.5 py-1 rounded border text-xs transition-colors ${
+                activeHolder === deployments.agent
+                  ? "bg-primary text-primary-foreground border-primary font-bold"
+                  : "bg-white border-outline-variant hover:border-primary text-on-surface"
+              }`}
+            >
+              Treasury Agent ({shortAddress(deployments.agent, 4, 4)})
+            </button>
+            {isWatching && (
+              <button
+                type="button"
+                onClick={clearWatch}
+                className="px-2.5 py-1 rounded border border-outline-variant bg-white hover:bg-error-container hover:text-on-error-container text-xs text-on-surface-variant transition-colors"
+              >
+                Clear watch
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Positions Table */}
+        <div className="rounded-xl border border-outline-variant bg-white shadow-sm overflow-hidden">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-outline-variant px-6 py-3">
+            <span className="font-label-caps text-label-caps text-outline">MARKET VALUE</span>
+            <span className="font-data-mono text-data-mono text-on-background flex items-center gap-1.5">
+              {addressPositions.isLoading ? "Scanning ledger…" : formatUsdcDisplay(addressPositions.totalValueRaw)}
+              <SourceTag source="chain" />
+            </span>
+          </div>
+          {addressPositions.error ? (
+            <p className="px-6 py-8 text-center text-sm text-error" role="alert">{addressPositions.error}</p>
+          ) : !activeHolder ? (
+            <p className="px-6 py-8 text-center text-sm text-on-surface-variant">
+              Connect a Stellar wallet or enter an address above to inspect on-chain positions.
+            </p>
+          ) : addressPositions.isLoading ? (
+            <p className="px-6 py-8 text-center text-sm text-on-surface-variant" role="status">
+              Reading Position entries from the market-core contract…
+            </p>
+          ) : addressPositions.rows.length === 0 ? (
+            <p className="px-6 py-8 text-center text-sm text-on-surface-variant">
+              {addressPositions.totalMarkets === undefined || addressPositions.totalMarkets === 0n
+                ? "No on-chain markets exist yet."
+                : "This address holds no position shares on-chain."}
+            </p>
+          ) : (
+            <ul className="divide-y divide-outline-variant">
+              {addressPositions.rows.map((row) => {
+                const settled = row.settlement !== null;
+                return (
+                  <li key={row.marketId.toString()} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-6 py-3">
+                    <span className="max-w-xl flex-1 truncate font-body-md text-body-md font-semibold text-on-surface">
+                      {row.question ?? `Market #${row.marketId.toString()}`}
+                    </span>
+                    <span className="font-data-mono text-data-mono text-on-surface-variant">
+                      {row.yes > 0n ? `${formatUsdc(row.yes, { maxDecimals: 2, grouping: true })} YES` : ""}
+                      {row.yes > 0n && row.no > 0n ? " · " : ""}
+                      {row.no > 0n ? `${formatUsdc(row.no, { maxDecimals: 2, grouping: true })} NO` : ""}
+                    </span>
+                    {row.yesBps !== null && (
+                      <span className="font-data-mono text-data-mono text-on-surface-variant">
+                        YES {row.yesBps / 100}%
+                      </span>
+                    )}
+                    <span className="font-data-mono text-data-mono font-semibold text-on-background">
+                      {row.valueRaw === null ? "—" : `${formatUsdc(row.valueRaw, { maxDecimals: 2, grouping: true })} USDC`}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                        row.settlement === "yes" || row.settlement === "no"
+                          ? "bg-secondary-container text-on-secondary-container"
+                          : row.settlement === "void"
+                            ? "bg-surface-container-highest text-on-surface-variant"
+                            : "bg-primary-container text-on-primary-container"
+                      }`}>
+                        {settled ? `Settled · ${row.settlement}` : "Open"}
+                      </span>
+                      <SourceTag source="chain" />
+                    </div>
+                    {row.archived && (
+                      <span className="font-data-mono text-[10px] text-outline">archived</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {reconcileProgress && (
+            <div className="border-t border-outline-variant px-6 py-2 flex items-center justify-between text-xs text-on-surface-variant">
+              <span>Checking older markets… {reconcileProgress.scanned.toLocaleString()} / {reconcileProgress.total.toLocaleString()}</span>
+              <button
+                type="button"
+                className="underline hover:text-primary ml-2"
+                onClick={() => {
+                  reconcileAbortRef.current?.abort();
+                  setReconcileProgress(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+          {!reconcileProgress && addressPositions.scanLimited && (
+            <p className="border-t border-outline-variant px-6 py-2 text-xs text-on-surface-variant">
+              The scan limit was reached; the newest markets were checked first.
+            </p>
+          )}
+        </div>
+        {isWatching && (
+          <p className="text-[11px] text-on-surface-variant mt-2 italic">
+            Note: Trade and transaction history isn&apos;t available for watched addresses yet.
+          </p>
+        )}
       </section>
 
       {/* J4: Unified Gateway Balance Widget */}
       <section className="mb-12 bg-primary-container/10 border border-primary/20 rounded-xl p-6 flex flex-col md:flex-row items-center justify-between gap-8">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 bg-primary rounded-full flex items-center justify-center text-on-primary">
-            <span className="material-symbols-outlined">account_balance_wallet</span>
+            <Icon name="account_balance_wallet" />
           </div>
           <div>
             <h3 className="font-headline-sm text-headline-sm">Agent Treasury</h3>
@@ -210,20 +628,153 @@ export default function PortfolioPage() {
         <div className="flex gap-8">
           <div className="text-center">
             <div className="font-label-caps text-[10px] text-outline mb-1">AVAILABLE (STELLAR TESTNET)</div>
-            <div className="font-data-mono font-bold text-lg text-primary">{summary?.availableCapitalRaw ? formatUsdc(BigInt(summary.availableCapitalRaw), { maxDecimals: 2, grouping: true }) : "—"} USDC</div>
+            <div className="font-data-mono font-bold text-lg text-primary">{summary?.availableCapitalRaw ? formatUsdcDisplay(BigInt(summary.availableCapitalRaw)) : "—"}</div>
           </div>
           <div className="w-px h-10 bg-outline-variant self-center"></div>
           <div className="text-center">
             <div className="font-label-caps text-[10px] text-outline mb-1">DEPLOYED (BACKEND RECORD)</div>
-            <div className="font-data-mono font-bold text-lg text-secondary">{(summary?.deployedCapital ?? 0).toLocaleString()} USDC</div>
+            <div className="font-data-mono font-bold text-lg text-secondary">
+              {(() => {
+                const raw = floatUsdcToRaw(summary?.deployedCapital ?? 0);
+                return raw !== null ? formatUsdcDisplay(raw) : "—";
+              })()}
+            </div>
           </div>
         </div>
+      </section>
+
+      <TreasuryRiskLimits backendCapitalRaw={summary?.availableCapitalRaw} />
+
+      <section className="mb-12 rounded-xl border border-outline-variant bg-white p-6 shadow-sm" aria-labelledby="connected-redemptions-title">
+        <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 id="connected-redemptions-title" className="font-headline-sm text-headline-sm text-on-surface">
+              Connected wallet redemptions
+            </h2>
+            <p className="mt-1 max-w-2xl text-sm text-on-surface-variant">
+              Scan on-chain positions for resolved markets and redeem them one at a time. Each transaction is signed separately by your wallet.
+            </p>
+            <div className="mt-2">
+              <TxReviewPreferenceControl />
+            </div>
+            {redeemBatch.discovery && (
+              <p className="mt-2 text-xs text-on-surface-variant" role="status">
+                Scanned {redeemBatch.discovery.scannedMarkets.toString()} of {redeemBatch.discovery.totalMarkets.toString()} markets; found{" "}
+                {redeemBatch.discovery.redeemables.length} redeemable position(s).
+                {redeemBatch.discovery.scanLimited ? " The scan limit was reached; newer markets were checked first." : ""}
+              </p>
+            )}
+            {redeemBatch.discovery && redeemBatch.discovery.redeemables.length > 0 && (
+              <p className="mt-1 text-xs text-on-surface-variant">
+                Expected total: {formatUsdc(expectedRedeemTotal, { maxDecimals: 2, grouping: true })} USDC ·
+                {" "}{currentRedeemed.length} of {redeemBatch.discovery.redeemables.length} redeemed
+                {currentRedeemed.length > 0
+                  ? ` (${formatUsdc(redeemedPayoutTotal, { maxDecimals: 2, grouping: true })} USDC received)`
+                  : ""}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void redeemBatch.scan()}
+              disabled={!wallet.isConnected || wallet.isWrongNetwork || redeemBatch.scanning || redeemBatch.running}
+              className="rounded border border-outline-variant px-4 py-2 text-sm font-semibold text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {redeemBatch.scanning ? "Scanning ledger…" : "Scan wallet"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void redeemBatch.redeemAll(reviewRedeem)}
+              disabled={!wallet.isConnected || wallet.isWrongNetwork || !redeemBatch.discovery?.redeemables.length || redeemBatch.running || redeemBatch.scanning}
+              className="rounded bg-primary px-4 py-2 text-sm font-semibold text-on-primary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Redeem all
+            </button>
+            {redeemBatch.running ? (
+              <button type="button" onClick={redeemBatch.cancel} className="rounded border border-outline-variant px-4 py-2 text-sm font-semibold">
+                Stop after current
+              </button>
+            ) : Object.values(redeemBatch.states).some((item) => item.s === "failed") ? (
+              <button
+                type="button"
+                onClick={() => void redeemBatch.retryFailed(reviewRedeem)}
+                className="rounded border border-outline-variant px-4 py-2 text-sm font-semibold"
+              >
+                Retry failed
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {!wallet.isConnected && <p className="mt-4 text-sm text-on-surface-variant">Connect a Stellar wallet to scan your positions.</p>}
+        {wallet.isWrongNetwork && <p className="mt-4 text-sm text-error">Switch your wallet to {NETWORK_LABEL} to redeem positions.</p>}
+        {redeemBatch.error && <p className="mt-4 text-sm text-error" role="alert">{redeemBatch.error}</p>}
+
+        {redeemBatch.discovery && redeemBatch.discovery.redeemables.length > 0 && (
+          <ul className="mt-5 divide-y divide-outline-variant rounded border border-outline-variant">
+            {redeemBatch.discovery.redeemables.map((item) => {
+              const id = item.marketId.toString();
+              const itemState = redeemBatch.states[id] ?? { s: "queued" as const };
+              const payout = formatUsdc(item.expectedPayout, { maxDecimals: 2, grouping: true });
+              return (
+                <li key={id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-semibold text-on-surface">Market #{id} · {item.settlement.toUpperCase()} winner</p>
+                    <p className="text-sm text-on-surface-variant">
+                      Estimated payout: {payout} USDC
+                      {item.archived ? " · archived ledger entry" : ""}
+                    </p>
+                    {itemState.s === "failed" && <p className="mt-1 text-sm text-error">{itemState.error}</p>}
+                    {itemState.s === "redeemed" && <p className="mt-1 text-sm text-secondary">Redeemed · {formatUsdc(itemState.payout, { maxDecimals: 2, grouping: true })} USDC</p>}
+                    {itemState.s === "signing" && <p className="mt-1 text-sm text-primary">Waiting for wallet signature…</p>}
+                    {itemState.s === "submitting" && <p className="mt-1 text-sm text-primary">Submitted to Stellar…</p>}
+                    {itemState.s === "skipped" && <p className="mt-1 text-sm text-on-surface-variant">Skipped</p>}
+                  </div>
+                  {!redeemBatch.running && itemState.s !== "redeemed" && itemState.s !== "skipped" && (
+                    <button
+                      type="button"
+                      onClick={() => redeemBatch.skip(id)}
+                      className="self-start rounded border border-outline-variant px-3 py-1.5 text-xs font-semibold text-on-surface-variant sm:self-center"
+                    >
+                      Skip
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {redeemBatch.discovery && redeemBatch.discovery.redeemables.length === 0 && (
+          <p className="mt-5 text-sm text-on-surface-variant">No resolved positions are ready to redeem.</p>
+        )}
+        {resumedItems.length > 0 && (
+          <div className="mt-5 border-t border-outline-variant pt-4">
+            <h3 className="font-label-caps text-xs font-bold uppercase tracking-wide text-on-surface-variant">
+              Saved batch progress
+            </h3>
+            <ul className="mt-2 space-y-2 text-sm">
+              {resumedItems.map(([id, item]) => (
+                <li key={id} className="flex flex-wrap justify-between gap-2">
+                  <span>Market #{id}</span>
+                  <span className={item.s === "failed" ? "text-error" : item.s === "redeemed" ? "text-secondary" : "text-on-surface-variant"}>
+                    {item.s === "redeemed"
+                      ? `Redeemed · ${formatUsdc(item.payout, { maxDecimals: 2, grouping: true })} USDC`
+                      : item.s === "failed"
+                        ? item.error
+                        : "Skipped"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
 
       {/* Detailed Positions Table */}
       <section className="bg-white border border-outline-variant rounded shadow-sm overflow-hidden mb-12">
         <div className="px-6 py-4 border-b border-outline-variant flex flex-col sm:flex-row justify-between items-start sm:items-center bg-surface-container-low gap-4">
-          <h2 className="font-headline-sm text-headline-sm text-on-surface">{status === 'OPEN' ? 'Open' : 'Resolved'} Positions</h2>
+          <h2 className="font-headline-sm text-headline-sm text-on-surface">Agent {status === 'OPEN' ? 'Open' : 'Resolved'} Positions</h2>
           <div className="flex items-center gap-4">
             <div className="flex bg-surface-container rounded-lg p-1 border border-outline-variant">
               <button 
@@ -242,51 +793,102 @@ export default function PortfolioPage() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left min-w-[1000px]">
+          <table
+            className="w-full border-collapse text-start min-w-[1000px]"
+            aria-rowcount={positions.length > 0 ? positions.length + 1 : undefined}
+          >
             <thead>
-              <tr className="bg-surface font-label-caps text-label-caps text-outline border-b border-outline-variant">
+              <tr aria-rowindex={1} className="bg-surface font-label-caps text-label-caps text-outline border-b border-outline-variant">
                 <th className="px-6 py-4 font-semibold">MARKET</th>
                 <th className="px-4 py-4 font-semibold">SIDE</th>
-                <th className="px-4 py-4 font-semibold text-right">ENTRY</th>
+                <th className="px-4 py-4 font-semibold text-end">ENTRY</th>
                 <th className="px-4 py-4 font-semibold text-center">PROBABILITY</th>
-                <th className="px-4 py-4 font-semibold text-right">SIZE</th>
-                <th className="px-4 py-4 font-semibold text-right">PNL</th>
+                <th className="px-4 py-4 font-semibold text-end">SIZE (BACKEND RECORD)</th>
+                <th className="px-4 py-4 font-semibold text-end">EXIT VALUE (ON-CHAIN)</th>
+                <th className="px-4 py-4 font-semibold text-end">PNL (BACKEND RECORD)</th>
                 <th className="px-4 py-4 font-semibold text-center">STATUS</th>
-                <th className="px-6 py-4 font-semibold text-right">ACTIONS</th>
+                <th className="px-6 py-4 font-semibold text-end">ACTIONS</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-outline-variant">
-              {isPositionsLoading ? (
+            {isPositionsLoading ? (
+              <tbody className="divide-y divide-outline-variant">
                 <tr>
-                  <td colSpan={8} className="px-6 py-8 text-center text-on-surface-variant">Loading positions...</td>
+                  <td colSpan={9} className="px-6 py-8 text-center text-on-surface-variant">Loading positions...</td>
                 </tr>
-              ) : positions.length === 0 ? (
+              </tbody>
+            ) : positions.length === 0 ? (
+              <tbody className="divide-y divide-outline-variant">
                 <tr>
-                  <td colSpan={8} className="px-6 py-8 text-center text-on-surface-variant">No active positions found.</td>
+                  <td colSpan={9} className="px-6 py-8 text-center text-on-surface-variant">No active positions found.</td>
                 </tr>
-              ) : (
-                positions.map((pos) => (
-                  <PositionRow 
-                    key={pos.id}
-                    market={pos.market.question}
-                    category={pos.market.category}
-                    platform={pos.market.onChainMarketId !== null ? `On-chain #${pos.market.onChainMarketId}` : "Not on-chain"}
-                    side={pos.direction}
-                    sideColor={pos.direction === 'YES' ? "bg-secondary-container text-on-secondary-container" : "bg-tertiary-container text-on-tertiary-container"}
-                    entry={`$${pos.entryPrice.toFixed(2)}`}
-                    prob={pos.currentPrice ? Math.round(pos.currentPrice * 100) : 50}
-                    yesNo={pos.direction}
-                    size={pos.size.toLocaleString()}
-                    pnl={(pos.pnl ?? 0) >= 0 ? `+$${Math.abs(pos.pnl ?? 0).toFixed(2)}` : `-$${Math.abs(pos.pnl ?? 0).toFixed(2)}`}
-                    pnlPercent={`${(pos.pnl ?? 0) >= 0 ? '+' : ''}${(((pos.pnl ?? 0) / (pos.size * pos.entryPrice)) * 100 || 0).toFixed(1)}%`}
-                    pnlColor={(pos.pnl ?? 0) >= 0 ? 'text-secondary' : 'text-tertiary'}
-                    status={pos.status}
-                    resolved={pos.status !== 'OPEN'}
-                    claimable={pos.status === 'CLOSED'}
-                  />
-                ))
-              )}
-            </tbody>
+              </tbody>
+            ) : (
+              <VirtualTableBody
+                items={positions}
+                colSpan={9}
+                getKey={(pos) => pos.id}
+                estimateSize={() => 68}
+                restorationKey="portfolio_positions"
+                renderRow={(pos, _idx, a11y) => {
+                  const costRaw = floatUsdcToRaw(pos.size);
+                  const pnlRaw = pos.pnl !== null ? floatUsdcToRaw(pos.pnl) : null;
+                  const returnBps = pnlRaw !== null && costRaw !== null && costRaw > 0n ? ratioBps(pnlRaw, costRaw) : null;
+                  const chainId = pos.market.onChainMarketId;
+                  const valEntry = chainId !== null ? treasuryValuation.byMarketId.get(chainId) : undefined;
+                  const val = valEntry?.valuation;
+
+                  let exitValue = "—";
+                  let exitSubLabel: string | undefined;
+                  let cappedWarning: string | null = null;
+
+                  if (val) {
+                    if (val.basis === "resolution" && val.resolution !== null) {
+                      exitValue = formatUsdcDisplay(val.resolution);
+                      exitSubLabel = "Redeemable (on-chain)";
+                    } else if (val.basis === "mid-only") {
+                      exitValue = treasuryValuation.basis === "mid" ? formatUsdcDisplay(val.mid) : "—";
+                      exitSubLabel = "Closed, awaiting resolution";
+                    } else {
+                      exitValue = formatUsdcDisplay(
+                        treasuryValuation.basis === "mid" ? val.mid : val.liquidation.value,
+                      );
+                      exitSubLabel = treasuryValuation.basis === "mid" ? "Mid (on-chain)" : "Exit (on-chain)";
+                    }
+
+                    if (val.liquidation.capped && valEntry) {
+                      const soldShares = val.liquidation.sold.yes + val.liquidation.sold.no;
+                      const heldShares = valEntry.holding.yes + valEntry.holding.no;
+                      cappedWarning = `Only ${formatUsdc(soldShares, { maxDecimals: 2, grouping: true })} of ${formatUsdc(heldShares, { maxDecimals: 2, grouping: true })} shares sellable. Selling the rest would return only ${formatUsdcDisplay(val.liquidation.tailValue)} more`;
+                    }
+                  }
+
+                  return (
+                    <PositionRow 
+                      key={pos.id}
+                      ariaRowIndex={a11y["aria-rowindex"]}
+                      market={pos.market.question}
+                      category={pos.market.category}
+                      platform={pos.market.onChainMarketId !== null ? `On-chain #${pos.market.onChainMarketId}` : "Not on-chain"}
+                      side={pos.direction}
+                      sideColor={pos.direction === 'YES' ? "bg-secondary-container text-on-secondary-container" : "bg-tertiary-container text-on-tertiary-container"}
+                      entry={formatProbability(pos.entryPrice)}
+                      prob={pos.currentPrice !== null ? Math.round(pos.currentPrice * 100) : null}
+                      yesNo={pos.direction}
+                      size={costRaw !== null ? formatUsdcDisplay(costRaw) : "—"}
+                      exitValue={exitValue}
+                      exitSubLabel={exitSubLabel}
+                      cappedWarning={cappedWarning}
+                      pnl={pnlRaw !== null ? formatSignedUsdc(pnlRaw) : "—"}
+                      pnlPercent={returnBps !== null ? formatBps(returnBps, { signed: true }) : "—"}
+                      pnlColor={(pos.pnl ?? 0) >= 0 ? 'text-secondary' : 'text-tertiary'}
+                      status={pos.status}
+                      resolved={pos.status !== 'OPEN'}
+                      claimable={pos.status === 'CLOSED'}
+                    />
+                  );
+                }}
+              />
+            )}
           </table>
         </div>
       </section>
@@ -299,7 +901,7 @@ export default function PortfolioPage() {
         <aside className="flex flex-col gap-6">
           <div className="bg-surface-container-low border border-outline-variant rounded p-6 shadow-sm">
             <div className="flex items-center gap-3 mb-4">
-              <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>psychology</span>
+              <Icon name="psychology" filled className="text-primary" />
               <h3 className="font-headline-sm text-headline-sm">Oracle Insight</h3>
             </div>
             <p className="font-body-md text-body-md text-on-surface-variant mb-4 leading-relaxed">
@@ -369,6 +971,15 @@ export default function PortfolioPage() {
           </div>
         </aside>
       </div>
+      {reviewModel && (
+        <TxReview
+          model={reviewModel.model}
+          changedFrom={reviewModel.changedFrom}
+          onConfirm={() => closeReview(true)}
+          onCancel={() => closeReview(false)}
+        />
+      )}
+      <ExportHistoryDialog open={exportOpen} onClose={() => setExportOpen(false)} />
     </main>
   );
 }

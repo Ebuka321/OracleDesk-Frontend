@@ -1,0 +1,172 @@
+"use client";
+
+import React from "react";
+import Link from "next/link";
+import { useIntegrityMonitor, integrityMonitor, type ExecutableChange } from "@/lib/stellar/integrity-monitor";
+import { type IntegrityResult } from "@/lib/stellar/contract-check";
+import { explorerAccount } from "@/lib/stellar/config";
+import { AlertTriangle, ShieldAlert, CheckCircle2, ExternalLink, RefreshCw } from "lucide-react";
+
+export function IntegrityBanner() {
+  const { status, results: integrity, changes } = useIntegrityMonitor();
+
+  if (status === "initial") {
+    return null;
+  }
+
+  if (status === "rechecking") {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="w-full bg-primary/10 border-b border-primary/30 text-on-surface px-4 py-2 text-xs z-50 sticky top-0 backdrop-blur-md"
+      >
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="w-3.5 h-3.5 text-primary animate-spin shrink-0" />
+            <span>Verifying contract specifications after detected on-chain upgrade…</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const results = integrity ? (Object.values(integrity) as IntegrityResult[]) : [];
+  const failingContracts = results.filter(
+    (r) => r.status === "mismatch" || r.status === "not-found" || r.status === "wrong-kind",
+  );
+  const compatibleContracts = results.filter((r) => r.status === "compatible");
+  const uncheckedContracts = results.filter((r) => r.status === "unchecked");
+  const allNotFound = results.length > 0 && results.every((r) => r.status === "not-found");
+
+  if (status === "failed" || failingContracts.length > 0) {
+    return (
+      <div
+        role="alert"
+        aria-live="assertive"
+        className="w-full bg-destructive/15 border-b border-destructive/40 text-destructive-foreground px-4 py-3 text-sm backdrop-blur-md"
+      >
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <ShieldAlert className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold text-destructive flex items-center gap-2">
+                Contract Interface Mismatch · Trading Disabled
+              </div>
+              <p className="text-on-surface-variant text-xs mt-0.5">
+                {allNotFound
+                  ? "None of the configured contracts were found on-chain. The Stellar testnet may have been reset. Contact the operator."
+                  : "The frontend was built against a different contract specification than what is running on-chain. Contact the operator."}
+              </p>
+              <ul className="mt-2 space-y-1 text-xs">
+                {failingContracts.map((f) => (
+                  <li key={f.contract} className="flex flex-wrap items-center gap-1.5 text-on-surface">
+                    <span className="font-mono font-medium text-destructive">{f.contract}:</span>
+                    <a
+                      href={explorerAccount(f.id) ?? undefined}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-primary hover:underline inline-flex items-center gap-0.5"
+                    >
+                      {f.id.slice(0, 6)}…{f.id.slice(-6)}
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                    <span className="text-muted-foreground">—</span>
+                    <span className="text-on-surface-variant">
+                      {f.status === "not-found"
+                        ? "Instance entry not found on-chain"
+                        : f.status === "wrong-kind"
+                          ? (f.detail ?? "Executable kind differs")
+                          : (f.detail ?? "Contract spec differs")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-end md:self-center">
+            <Link
+              href="/admin/contracts"
+              className="px-3 py-1.5 rounded bg-surface border border-outline-variant hover:bg-surface-container text-xs font-medium inline-flex items-center gap-1.5 transition-colors"
+            >
+              View Contract Matrix
+            </Link>
+            <button
+              onClick={() => void integrityMonitor.probe()}
+              className="px-3 py-1.5 rounded bg-destructive/20 hover:bg-destructive/30 text-destructive text-xs font-medium inline-flex items-center gap-1.5 transition-colors shrink-0"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Recheck
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (compatibleContracts.length > 0) {
+    const missingCaps = compatibleContracts.flatMap((c) =>
+      Object.entries(c.capabilities ?? {})
+        .filter(([, compat]) => compat && !compat.ok)
+        .map(([cap, compat]) => ({
+          cap,
+          reason: (compat as { ok: false; reason: string }).reason,
+        })),
+    );
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="w-full bg-surface-container-low border-b border-outline-variant text-on-surface px-4 py-2 text-xs backdrop-blur-md"
+      >
+        <div className="max-w-7xl mx-auto">
+          <details>
+            <summary className="cursor-pointer font-medium text-on-surface-variant hover:text-on-surface">
+              Some newer features are unavailable on this deployment
+            </summary>
+            {missingCaps.length > 0 && (
+              <ul className="mt-2 space-y-1 font-mono text-[11px] text-on-surface-variant">
+                {missingCaps.map((m) => (
+                  <li key={m.cap}>
+                    <span className="font-semibold text-on-surface">{m.cap}</span>: {m.reason}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </details>
+        </div>
+      </div>
+    );
+  }
+
+  if (uncheckedContracts.length > 0) {
+    const isArchived = uncheckedContracts.some((u) => u.detail === "archived");
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="w-full bg-amber-500/15 border-b border-amber-500/30 text-amber-200 px-4 py-2 text-xs backdrop-blur-md"
+      >
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              {isArchived
+                ? "Contract entry archived (TTL expired). Reads will attempt state restoration."
+                : "Contract integrity check is temporarily unchecked due to RPC connectivity issues. Writes are still enabled."}
+            </span>
+          </div>
+          <button
+            onClick={() => void integrityMonitor.probe()}
+            className="text-amber-300 hover:text-amber-100 font-medium inline-flex items-center gap-1 shrink-0"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}

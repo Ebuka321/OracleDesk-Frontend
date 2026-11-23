@@ -1,4 +1,6 @@
 "use client";
+import Image from "next/image";
+import { Icon, type IconName } from "@/components/ui/icon";
 
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
@@ -70,7 +72,7 @@ export default function MarketTerminal() {
             High-stakes decision-making requires clarity. Our new Light Mode design system minimizes cognitive load with a data-first philosophy and tonal layering.
           </p>
           <div className="flex flex-wrap gap-4">
-            <Link href="/execution-terminal" className="px-6 py-3 bg-primary text-primary-foreground font-headline-sm text-headline-sm rounded hover:shadow-lg transition-all active:scale-[0.98]">
+            <Link href="/markets" className="px-6 py-3 bg-primary text-primary-foreground font-headline-sm text-headline-sm rounded hover:shadow-lg transition-all active:scale-[0.98]">
               Launch Terminal
             </Link>
             <button className="px-6 py-3 border border-outline text-primary font-headline-sm text-headline-sm rounded hover:bg-surface-container transition-all active:scale-[0.98]">
@@ -79,15 +81,17 @@ export default function MarketTerminal() {
           </div>        </div>
         <div className="lg:col-span-4 relative">
           <div className="w-full aspect-square rounded-xl overflow-hidden shadow-2xl border border-outline-variant bg-white">
-            <img 
-              className="w-full h-full object-cover" 
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDdeD9deNHyx0wMXT02w2_lLmSBjxZpY7tClRhEtvoAJiEwcrTQyz-nCWt-Qr_kCaBccro0LEhL_Fbpon7QfNWkpTe1dQnaAyC-68UeS-N0P5Iq8gaCnLGI8JTATTIblvUZp_Y0yPz2vN2sMKilhAv5ihKpTEVVp_-qiqJ8I9_AjwPIKkqGTcGna2lpGcFg3PHpZ-ZKE9o1VS14P-LKnFZmQHU4cldP5yqhPBtlRx5pp-GrG2elWGhsp8MV7BguvmB3R4qAZ0292w" 
+            <Image
+              width={512}
+              height={512}
+              className="w-full h-full object-cover"
+              src="/images/terminal-hero.webp"
               alt="Institutional Terminal Interface"
             />
           </div>
-          <div className="absolute -bottom-4 -left-0 md:-left-8 bg-white/80 backdrop-blur-md p-4 rounded shadow-xl border border-outline-variant flex items-center gap-3">
+          <div className="absolute -bottom-4 -start-0 md:-start-8 bg-white/80 backdrop-blur-md p-4 rounded shadow-xl border border-outline-variant flex items-center gap-3">
             <div className="w-10 h-10 bg-secondary rounded-full flex items-center justify-center text-white">
-              <span className="material-symbols-outlined">trending_up</span>
+              <Icon name="trending_up" />
             </div>
             <div>
               <p className="font-label-caps text-label-caps text-on-surface-variant text-[10px]">MARKET ACCURACY</p>
@@ -103,7 +107,7 @@ export default function MarketTerminal() {
         <div className="md:col-span-2 lg:col-span-2 bg-gradient-to-br from-white to-[#f0f9fa] border border-outline-variant p-6 rounded-lg flex flex-col gap-4 shadow-sm">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-primary">psychology</span>
+              <Icon name="psychology" className="text-primary" />
               <span className="font-headline-sm text-headline-sm text-primary">Oracle Insights</span>
             </div>
             <span className="font-label-caps text-label-caps px-2 py-1 bg-primary text-on-primary rounded text-[10px] font-bold">LIVE</span>
@@ -163,17 +167,17 @@ export default function MarketTerminal() {
         <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-surface-container-low">
           <h2 className="font-headline-sm text-headline-sm">Trending Prediction Markets</h2>
           <div className="flex gap-4">
-            <span className="material-symbols-outlined cursor-pointer hover:text-primary transition-colors">filter_list</span>
-            <span className="material-symbols-outlined cursor-pointer hover:text-primary transition-colors">search</span>
+            <Icon name="filter_list" className="cursor-pointer hover:text-primary transition-colors" />
+            <Icon name="search" className="cursor-pointer hover:text-primary transition-colors" />
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full text-start border-collapse">
             <thead>
               <tr className="bg-surface-container-lowest border-b border-outline-variant uppercase text-[10px] tracking-widest font-bold">
                 <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps">Market Name</th>
-                <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps text-right">Probability</th>
-                <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps text-right">Volume (24h)</th>
+                <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps text-end">Probability</th>
+                <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps text-end">Volume (24h)</th>
                 <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps text-center">Trend</th>
                 <th className="px-6 py-4 text-on-surface-variant font-label-caps text-label-caps">Action</th>
               </tr>
@@ -187,12 +191,12 @@ export default function MarketTerminal() {
                 <tr key={i} className="hover:bg-surface-container/50 transition-colors group">
                   <td className="px-6 py-4 flex items-center gap-3">
                     <div className="w-8 h-8 rounded bg-surface-container-high flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-                      <span className="material-symbols-outlined text-primary text-sm">{m.icon}</span>
+                      <Icon name={m.icon as IconName} className="text-primary text-sm" />
                     </div>
                     <span className="font-semibold text-on-surface">{m.name}</span>
                   </td>
                   <td className={`px-6 py-4 text-right font-data-mono font-bold text-${m.color}`}>{m.prob}</td>
-                  <td className="px-6 py-4 text-right font-data-mono text-on-surface-variant">{m.vol}</td>
+                  <td className="px-6 py-4 text-end font-data-mono text-on-surface-variant">{m.vol}</td>
                   <td className="px-6 py-4">
                     <div className="flex justify-center">
                       <div className="h-3 w-24 bg-surface-container-high rounded-full overflow-hidden flex items-center px-0.5 border border-outline-variant/30">
@@ -255,13 +259,13 @@ export default function MarketTerminal() {
           <ul className="space-y-6 pt-4">
             <li className="flex items-start gap-3">
               <div className="bg-secondary/10 p-1 rounded">
-                <span className="material-symbols-outlined text-secondary text-[20px]">check_circle</span>
+                <Icon name="check_circle" className="text-secondary text-[20px]" />
               </div>
               <span><strong className="font-headline-sm text-headline-sm block mb-1">4px Baseline Grid</strong> Tight spacing for high information density without visual clutter.</span>
             </li>
             <li className="flex items-start gap-3">
               <div className="bg-secondary/10 p-1 rounded">
-                <span className="material-symbols-outlined text-secondary text-[20px]">check_circle</span>
+                <Icon name="check_circle" className="text-secondary text-[20px]" />
               </div>
               <span><strong className="font-headline-sm text-headline-sm block mb-1">Geist Variable Typeface</strong> Engineered for maximum legibility in numerical datasets.</span>
             </li>

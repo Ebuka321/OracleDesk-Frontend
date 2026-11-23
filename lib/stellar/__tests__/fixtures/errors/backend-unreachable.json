@@ -1,0 +1,15 @@
+{
+  "id": "backend/unreachable",
+  "source": "backend",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "ApiError",
+    "message": "Could not connect to the API server",
+    "code": "BACKEND_UNREACHABLE"
+  },
+  "expect": {
+    "kind": "network"
+  }
+}

@@ -4,6 +4,26 @@ export const USDC_UNIT = 10n ** BigInt(USDC_DECIMALS);
 export const BPS = 10_000n;
 
 /**
+ * Floor of `(a * b) / c` in integer arithmetic. Throws RangeError when
+ * `a < 0n`, `b < 0n` or `c <= 0n`.
+ */
+export function mulDivFloor(a: bigint, b: bigint, c: bigint): bigint {
+  if (a < 0n || b < 0n || c <= 0n) throw new RangeError("mulDivFloor requires a >= 0, b >= 0 and c > 0");
+  return (a * b) / c;
+}
+
+/**
+ * Ceiling of `(a * b) / c` in integer arithmetic. Throws RangeError when
+ * `a < 0n`, `b < 0n` or `c <= 0n`.
+ */
+export function mulDivCeil(a: bigint, b: bigint, c: bigint): bigint {
+  if (a < 0n || b < 0n || c <= 0n) throw new RangeError("mulDivCeil requires a >= 0, b >= 0 and c > 0");
+  const p = a * b;
+  const q = p / c;
+  return p % c !== 0n ? q + 1n : q;
+}
+
+/**
  * Parses a decimal USDC string into base units. Accepts "1", "1.5", "0.0000001".
  * Rejects exponents ("1e5"), signs, spaces inside, empty strings and more
  * than 7 decimal places. Never goes through a float.
@@ -26,19 +46,38 @@ export function tryParseUsdc(input: string): bigint | null {
   }
 }
 
+export const XLM_DECIMALS = 7;
+export const XLM_UNIT = 10n ** BigInt(XLM_DECIMALS);
+
+function formatFixed(
+  raw: bigint,
+  decimals: number,
+  opts: { minDecimals?: number; maxDecimals?: number; grouping?: boolean } = {},
+): string {
+  const { minDecimals = 0, maxDecimals = decimals, grouping = false } = opts;
+  const unit = 10n ** BigInt(decimals);
+  const negative = raw < 0n;
+  const abs = negative ? -raw : raw;
+  const whole = (abs / unit).toString();
+  let frac = (abs % unit).toString().padStart(decimals, "0").slice(0, maxDecimals).replace(/0+$/, "");
+  if (frac.length < minDecimals) frac = frac.padEnd(minDecimals, "0");
+  const wholeOut = grouping ? whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : whole;
+  return `${negative ? "-" : ""}${wholeOut}${frac ? `.${frac}` : ""}`;
+}
+
 /**
  * Formats base units as a decimal string. Trailing zeros are trimmed unless
  * `minDecimals` asks for some; `maxDecimals` truncates (never rounds up).
  */
 export function formatUsdc(raw: bigint, opts: { minDecimals?: number; maxDecimals?: number; grouping?: boolean } = {}): string {
-  const { minDecimals = 0, maxDecimals = USDC_DECIMALS, grouping = false } = opts;
-  const negative = raw < 0n;
-  const abs = negative ? -raw : raw;
-  const whole = (abs / USDC_UNIT).toString();
-  let frac = (abs % USDC_UNIT).toString().padStart(USDC_DECIMALS, "0").slice(0, maxDecimals).replace(/0+$/, "");
-  if (frac.length < minDecimals) frac = frac.padEnd(minDecimals, "0");
-  const wholeOut = grouping ? whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : whole;
-  return `${negative ? "-" : ""}${wholeOut}${frac ? `.${frac}` : ""}`;
+  return formatFixed(raw, USDC_DECIMALS, opts);
+}
+
+/**
+ * Formats stroops as a decimal XLM string with 7 decimal places.
+ */
+export function formatXlm(stroops: bigint, opts: { minDecimals?: number; maxDecimals?: number; grouping?: boolean } = {}): string {
+  return formatFixed(stroops, XLM_DECIMALS, opts);
 }
 
 /** Display-only conversion. Never feed the result back into a transaction. */
@@ -63,6 +102,18 @@ export function maxIn(target: bigint, slippageBps: number | bigint): bigint {
   if (target < 0n || bps < 0n) throw new Error("Invalid slippage");
   const numerator = target * (BPS + bps);
   return (numerator + BPS - 1n) / BPS;
+}
+
+/**
+ * Converts a probability in [0, 1] (the backend's float) to integer basis
+ * points. This is the one place such a float enters bigint math. Rejects NaN,
+ * infinities and anything outside the range.
+ */
+export function probabilityToBps(probability: number): bigint {
+  if (!Number.isFinite(probability) || probability < 0 || probability > 1) {
+    throw new Error("A probability must be between 0 and 1");
+  }
+  return BigInt(Math.round(probability * Number(BPS)));
 }
 
 /** Share of `amount` given in basis points, rounded down. */

@@ -1,7 +1,9 @@
 "use client";
+import { Icon, type IconName } from "@/components/ui/icon";
 
 import React from "react";
 import { useWallet } from "@/lib/contexts/WalletContext";
+import { useViewedAddress } from "@/lib/hooks/useViewedAddress";
 import { useUsdcBalance } from "@/lib/hooks/useStellar";
 import { NETWORK_LABEL, explorerAccount } from "@/lib/stellar/config";
 import { formatUsdc, shortAddress } from "@/lib/stellar/units";
@@ -11,7 +13,7 @@ const WalletCard = ({ name, address, balance, active }: { name: string, address:
   <div className={`bg-white border ${active ? 'border-primary' : 'border-outline-variant'} rounded p-4 flex items-center justify-between group hover:border-primary transition-colors cursor-pointer`}>
     <div className="flex items-center gap-3">
       <div className="w-10 h-10 rounded-full bg-surface-container-high flex items-center justify-center">
-        <span className="material-symbols-outlined text-primary">account_balance_wallet</span>
+        <Icon name="account_balance_wallet" className="text-primary" />
       </div>
       <div>
         <div className="font-bold text-on-surface">{name}</div>
@@ -29,7 +31,7 @@ const WalletCard = ({ name, address, balance, active }: { name: string, address:
 
 interface TransactionRowProps {
   type: string;
-  icon: string;
+  icon: IconName;
   iconColor: string;
   asset: string;
   amount: string;
@@ -43,7 +45,7 @@ const TransactionRow = ({ type, icon, iconColor, asset, amount, amountColor, sta
   <tr className="zebra-stripe border-b border-outline-variant group transition-colors hover:bg-surface-container/40">
     <td className="px-4 py-4">
       <div className="flex items-center gap-2">
-        <span className={`material-symbols-outlined ${iconColor} text-[18px]`}>{icon}</span>
+        <Icon name={icon} className={`${iconColor} text-[18px]`} />
         <span className="font-body-md text-on-surface">{type}</span>
       </div>
     </td>
@@ -53,7 +55,7 @@ const TransactionRow = ({ type, icon, iconColor, asset, amount, amountColor, sta
       <span className={`${statusClass} text-[10px] px-2 py-0.5 rounded font-bold`}>{status}</span>
     </td>
     <td className="px-4 py-4 text-on-surface-variant text-[12px]">{date}</td>
-    <td className="px-4 py-4 text-right">
+    <td className="px-4 py-4 text-end">
       <span className="text-on-surface-variant font-label-caps text-[11px]">—</span>
     </td>
   </tr>
@@ -61,7 +63,9 @@ const TransactionRow = ({ type, icon, iconColor, asset, amount, amountColor, sta
 
 export default function WalletsPage() {
   const { address, isConnected, openModal, isWrongNetwork } = useWallet();
-  const balance = useUsdcBalance(address);
+  const { viewed, isWatching } = useViewedAddress();
+  const activeAddress = viewed ?? address;
+  const balance = useUsdcBalance(activeAddress);
 
   const formattedBalance =
     balance.data !== undefined ? formatUsdc(balance.data, { minDecimals: 2, maxDecimals: 2, grouping: true }) : "0.00";
@@ -96,7 +100,14 @@ export default function WalletsPage() {
         <div className="col-span-12 lg:col-span-4 bg-white border border-outline-variant rounded p-6 flex flex-col justify-between h-64 shadow-sm">
           <div>
             <div className="flex items-center justify-between mb-4">
-              <span className="font-label-caps text-label-caps text-on-surface-variant">TOTAL EQUITY</span>
+              <div className="flex items-center gap-2">
+                <span className="font-label-caps text-label-caps text-on-surface-variant">TOTAL EQUITY</span>
+                {isWatching && (
+                  <span className="bg-primary/10 text-primary text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-primary/20">
+                    Watching
+                  </span>
+                )}
+              </div>
               {isWrongNetwork && <span className="text-error text-[11px] font-bold">Wrong network</span>}
             </div>
             <div className="font-display-lg text-display-lg text-on-surface tracking-tight text-4xl">
@@ -143,7 +154,29 @@ export default function WalletsPage() {
 
         {/* Wallet Connections */}
         <div className="col-span-12 lg:col-span-4 space-y-4">
-          <h3 className="font-headline-sm text-headline-sm text-on-surface">Connected Wallets</h3>
+          <h3 className="font-headline-sm text-headline-sm text-on-surface">
+            {isWatching ? "Inspected Identity" : "Connected Wallets"}
+          </h3>
+          {isWatching && viewed && (
+            <div className="bg-primary/5 border border-primary/30 rounded p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Icon name="visibility" className="text-primary" />
+                </div>
+                <div>
+                  <div className="font-bold text-on-surface flex items-center gap-2">
+                    Watched Address
+                    <span className="bg-primary/20 text-primary text-[10px] px-1.5 py-0.5 rounded font-bold">WATCHING</span>
+                  </div>
+                  <div className="text-[12px] text-on-surface-variant font-data-mono">{shortAddress(viewed, 6, 4)}</div>
+                </div>
+              </div>
+              <div className="flex flex-col items-end">
+                <div className="font-data-mono text-on-surface font-bold">${formattedBalance}</div>
+                <span className="text-[10px] font-label-caps text-on-surface-variant uppercase">USDC</span>
+              </div>
+            </div>
+          )}
           {isConnected && address ? (
             <WalletCard 
               name="Stellar wallet"
@@ -167,7 +200,7 @@ export default function WalletsPage() {
             className="w-full py-3 border-2 border-dashed border-outline-variant rounded text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-container hover:border-primary hover:text-primary transition-all flex items-center justify-center gap-2"
             onClick={() => openModal()}
           >
-            <span className="material-symbols-outlined text-[18px]">add</span> ADD NEW WALLET
+            <Icon name="add" className="text-[18px]" /> ADD NEW WALLET
           </button>
         </div>
 
@@ -177,17 +210,17 @@ export default function WalletsPage() {
             <h3 className="font-headline-sm text-headline-sm text-on-surface flex items-center gap-2">Transaction History <DemoBadge /></h3>
             {address && (
               <a
-                href={explorerAccount(address)}
+                href={explorerAccount(address) ?? undefined}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-primary hover:underline font-label-caps text-[11px] inline-flex items-center gap-1"
               >
-                YOUR REAL HISTORY ON STELLAR EXPERT <span className="material-symbols-outlined text-[14px]">open_in_new</span>
+                YOUR REAL HISTORY ON STELLAR EXPERT <Icon name="open_in_new" className="text-[14px]" />
               </a>
             )}
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full text-start border-collapse">
               <thead>
                 <tr className="bg-surface text-on-surface-variant font-label-caps text-[11px] border-b border-outline-variant uppercase tracking-wider">
                   <th className="px-4 py-3 font-bold">TYPE</th>
@@ -195,7 +228,7 @@ export default function WalletsPage() {
                   <th className="px-4 py-3 font-bold">AMOUNT</th>
                   <th className="px-4 py-3 font-bold">STATUS</th>
                   <th className="px-4 py-3 font-bold">DATE</th>
-                  <th className="px-4 py-3 font-bold text-right">ACTION</th>
+                  <th className="px-4 py-3 font-bold text-end">ACTION</th>
                 </tr>
               </thead>
               <tbody className="font-body-md">

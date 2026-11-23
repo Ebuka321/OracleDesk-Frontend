@@ -1,0 +1,16 @@
+{
+  "id": "send/tx-too-late",
+  "source": "send",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "SendFailed",
+    "message": "Transaction submission failed"
+  },
+  "errorResultCode": "txTooLate",
+  "expect": {
+    "kind": "expired",
+    "code": "tx_too_late"
+  }
+}

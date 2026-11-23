@@ -96,15 +96,15 @@ module.exports = {
         "container-max-width": "1440px",
       },
       fontFamily: {
-        "geist": ["var(--font-geist-sans)"],
-        "inter": ["var(--font-inter)"],
-        "headline-sm": ["var(--font-geist-sans)"],
-        "body-lg": ["var(--font-inter)"],
-        "body-md": ["var(--font-inter)"],
-        "display-lg": ["var(--font-geist-sans)"],
-        "headline-md": ["var(--font-geist-sans)"],
-        "data-mono": ["var(--font-geist-sans)"],
-        "label-caps": ["var(--font-geist-sans)"],
+        "geist": ["var(--font-geist-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        "inter": ["var(--font-inter)", "ui-sans-serif", "system-ui", "sans-serif"],
+        "headline-sm": ["var(--font-geist-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        "body-lg": ["var(--font-inter)", "ui-sans-serif", "system-ui", "sans-serif"],
+        "body-md": ["var(--font-inter)", "ui-sans-serif", "system-ui", "sans-serif"],
+        "display-lg": ["var(--font-geist-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        "headline-md": ["var(--font-geist-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        "data-mono": ["var(--font-geist-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
+        "label-caps": ["var(--font-geist-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
       },
       fontSize: {
         "headline-sm": ["18px", { "lineHeight": "1.4", "fontWeight": "600" }],
@@ -117,11 +117,16 @@ module.exports = {
       },
       animation: {
         "ticker": "ticker 30s linear infinite",
+        "ticker-rtl": "ticker-rtl 30s linear infinite",
       },
       keyframes: {
         ticker: {
           "0%": { transform: "translateX(0)" },
           "100%": { transform: "translateX(-50%)" },
+        },
+        "ticker-rtl": {
+          "0%": { transform: "translateX(0)" },
+          "100%": { transform: "translateX(50%)" },
         },
       },
     },

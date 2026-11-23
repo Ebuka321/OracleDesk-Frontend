@@ -1,6 +1,94 @@
 # Status
 
-Last updated: 2026-10-07. This is the honest account of the frontend's Stellar port: what works, what isn't verified, and what a human has to decide. "Verified" means a command was run and its output observed in the session that wrote this file. The backend's [docs/STATUS.md](https://github.com/OracleDesk/OracleDesk-Backend/blob/main/docs/STATUS.md) covers the server side.
+Last updated: 2026-10-19. The latest issue verification is below; the original Stellar port record follows it. "Verified" means a command was run and its output observed in the session that wrote this file. The backend's [docs/STATUS.md](https://github.com/OracleDesk/OracleDesk-Backend/blob/main/docs/STATUS.md) covers the server side.
+
+## Chart, home page and reasoning-feed issues #51–#54 (2026-10-19)
+
+- #53: typed `getEvents` decoding for market-core, `loadPriceHistory` (retention-clamped
+  pagination, IndexedDB + bounded in-memory cache) and `usePriceHistory`.
+- #54: real step-line `PriceChart` on `/market?onChainId=…` — worker-bucketed points,
+  mount-frame guard (removed the Recharts `width(-1)` warnings), CSS-variable colors.
+- #51: home hero shows the most liquid ACTIVE market (deterministic `pickFeaturedMarket`),
+  real ticker formatting, honest CTA copy; removed the random probability walk, the
+  placeholder volume/liquidity tiles, the invented insight quote and the fabricated
+  equity-curve card (labelled demo positions remain).
+- #52: `/reasoning` renders only real data — fabricated terminal sidebar, TPS badge,
+  fallback synthesis and invented source-weighting defaults are gone; the feed paginates
+  infinitely (`useInfiniteTraces`, id-deduped `mergeTracePages`, IntersectionObserver
+  sentinel with a button fallback) and stops after page one where the backend omits
+  pagination meta. `lib/__tests__/no-fabricated-trace-data.test.ts` guards the page.
+
+Validation: `typecheck` 0 errors · `lint` 0 errors, 31 existing warnings (3 fewer than
+before this session: unused Hero/sidebar state) · `test` passing, no type
+errors · `build` exit 0 with 0 `width(-1)` occurrences and the price-history worker
+chunk emitted. Pre-existing breakage found and fixed along the way: unexported
+`extractSources`/`matchSources` (typecheck), a brittle `toBe(0.2)` float assertion, an
+unescaped apostrophe lint error, and a placeholder `matchSources` test that never called
+the helper. Contract-shaped event fixtures under `lib/stellar/__tests__/fixtures/` are
+synthetic (the contracts submodule is not initialized and there is no backend); they
+match the decoder's expected shapes, not newly captured testnet events. A Cumulative
+Layout Shift metric for the chart (web-vitals) was not measured: it needs a real browser
+run, which is outside these issues' verification.
+
+## Wallet activity issues #39–#42 (2026-10-18)
+
+- #39: confirmed bigint position/balance deltas, ledger guards, reconciliation,
+  pending/awaiting-RPC labels and transaction links.
+- #40: contract-spec Trade filters/decoding, backward window probing, cursor
+  pagination, live deduplication, retention notices and a bounded virtual tape.
+- #41: shared socket delivery once per frame, bounded catch-up, rolling burst
+  summaries, static burst rows, memoized home rows and reduced motion.
+- #42: address/network-scoped IndexedDB inbox, explicit persisted read state,
+  own-wallet classification, resolution/redemption polling and a real bell count.
+
+Validation: `check:bindings`, `typecheck`, `lint`, `test` and `build` pass.
+The suite passes (run `npm test` for current counts); lint reports 31 existing warnings and
+no errors. Production prerender still reports the existing Recharts container
+size warnings. Baseline merge defects in trading-hook imports, SDK 16 trustline
+calls, ledger-clock RPC access, transaction review and tracker polling were
+repaired because these paths are required by the four issues.
+The lockfile also includes the wallet kit's peer dependency tree, so plain
+`npm ci` can validate and install it without `--legacy-peer-deps`.
+Clean installation succeeds. npm reports 69 dependency advisories (18 low,
+16 moderate, 30 high, 5 critical); dependency security upgrades are outside
+these four issues and were not applied.
+
+Browser checks in headless Chrome (1440×1100): the actual app rendered both
+feeds without exceptions; hidden-tab simulation held the feed DOM unchanged,
+then delivered eight visible rows and an overflow summary for 1,000 events.
+Emulated reduced motion left all feed-row transforms at `none`. A separate
+temporary component harness using actual inbox/tape components and fixture
+wallets/RPC confirmed read state after reload, switching A→B→A without leaking
+A's fills, disconnect clearing the inbox, and **25 DOM rows for 2,000 trades**
+(24 data rows plus a spacer, both at the top and after scrolling).
+
+Profiler comparison: 500 synthetic trades per sample, normal motion,
+development React Profiler, Node 24.15.0, Next 16.2.6, React 19.2.4. The baseline
+uses the `develop@529912f` feed implementations with the same profiler wrapper;
+the final feed uses the shared batcher. Each row sums the measured intervals
+including the final settling interval. These are single local samples, not a
+hardware-independent FPS claim. See CONTRIBUTING.md for reproduction.
+
+| Feed | Events/second | Before commits | After commits | Before render ms | After render ms |
+|---|---:|---:|---:|---:|---:|
+| Market | 500 | 40 | 57 | 463.1 | 247.0 |
+| Market | 50 | 323 | 496 | 3,191.4 | 2,112.5 |
+| Home | 500 | 102 | 61 | 232.8 | 203.1 |
+| Home | 50 | 497 | 499 | 1,412.1 | 1,007.3 |
+
+The slower baseline market feed coalesces more events under main-thread load;
+its lower commit count does not mean it delivered more responsive updates.
+The new scheduler emits at most one subscriber batch per frame and removes
+animation wrappers during sustained bursts. Render time decreased in these
+samples, while the ring bounds and scheduler behavior are also unit tested.
+
+Still manual: signing buy/sell/redeem with a real browser wallet, real
+two-wallet event delivery, and live seeded-market resolution/redemption. No
+transactions were submitted during verification. Event decoding tests use
+contract-shaped XDR fixtures, not a newly captured testnet trade. Follow the
+new checklist in [manual-test.md](manual-test.md).
+
+[Production inbox screenshot, disconnected](images/notifications-disconnected.png).
 
 ## ⚠️ Action required before anything else
 
@@ -13,6 +101,15 @@ Last updated: 2026-10-07. This is the honest account of the frontend's Stellar p
 ## Toolchain
 
 Node v24.13.1, npm 11.8.0 (CI: Node 22 via `.nvmrc`), Next.js 16.2.6 (Turbopack), React 19.2.4, TypeScript 5.9.3, `@tanstack/react-query` 5.100.10, `@stellar/stellar-sdk` 16.3.1, `@creit.tech/stellar-wallets-kit` 2.5.0 (pinned exactly), Vitest 5.0.3, gitleaks 8.30.1, Stellar CLI 27.1.0. Contracts submodule at `OracleDesk-SmartContract@eb5f3fd` (that repo's `main` HEAD).
+
+## Coordinated Stellar SDK 17 & Wallets Kit Upgrade (Issue #142)
+
+The app pins `@stellar/stellar-sdk` to 16.3.1 and `@creit.tech/stellar-wallets-kit` to 2.5.0 to ensure XDR class identity and avoid duplicate SDK installations in the bundle.
+- **CI Guard**: `npm run check:sdk` runs in CI and fails if multiple versions of `@stellar/stellar-sdk` exist in `package-lock.json` or if the app's SDK major deviates from the bindings or wallet kit declared major.
+- **Upstream Coordination Order**:
+  1. In `OracleDesk-SmartContract`: Pin a Stellar CLI version targeting SDK 17, regenerate bindings (`make bindings`), and export `bindings-package.json`.
+  2. Bump the `contracts` submodule pointer in this repo and run `npm run sync:bindings`.
+  3. Upgrade `@stellar/stellar-sdk` to 17.x and `@creit.tech/stellar-wallets-kit` to the matching release in `package.json`, then run `npm run check:sdk`.
 
 ## Phases
 
@@ -28,7 +125,7 @@ Node v24.13.1, npm 11.8.0 (CI: Node 22 via `.nvmrc`), Next.js 16.2.6 (Turbopack)
 | C6. Suspense build failure | ✅ | Reproduced and fixed (below) |
 | C7. Tests | ✅ | 21 Vitest tests |
 | D. End to end | ✅ read paths | See below |
-| E. Contributor readiness | ✅ files, ⚠️ CI never ran on GitHub | README, CONTRIBUTING, SECURITY, CoC, LICENSE, templates, CI |
+| E. Contributor readiness | ✅ files & CI | README, CONTRIBUTING, SECURITY, CoC, LICENSE, templates, CI (`install`, `frontend`, `x402-contract`, `secrets-canary`, `perf`) |
 | F. Backlog | ✅ | 14 drafts in `docs/wave-issues/` (5 good first issues) |
 
 ## Baseline (before any change)
@@ -46,7 +143,7 @@ Node v24.13.1, npm 11.8.0 (CI: Node 22 via `.nvmrc`), Next.js 16.2.6 (Turbopack)
 
 ## Fully verified (commands run, output observed)
 
-- `npm run typecheck` 0 · `npm run lint` 0 · `npm run check:bindings` 0 · `npm test` 0 (4 files, 21 tests) · `npm run build` 0 with all 27 routes prerendered as static.
+- `npm run typecheck` 0 · `npm run lint` 0 · `npm run check:bindings` 0 · `npm test` 0 · `npm run build` 0 with all 27 routes prerendered as static.
 - `grep -rnE "from ['\"](wagmi|viem|@reown|@rainbow-me)" app components lib` → no matches; package.json has none of them.
 - **C6:** with the `<Suspense>` boundary temporarily removed from `/markets/quick-view`, `next build` failed with "useSearchParams() should be wrapped in a suspense boundary at page /markets/quick-view … Export encountered an error". With it restored, the build passes. `/copy-trade` and `/reasoning/verify` use the same pattern.
 - A fresh `git clone --recurse-submodules -b feat/stellar-port` of this repo checks out `contracts` at `eb5f3fd`, and `npm ci`, `check:bindings`, `typecheck`, `lint`, `test` and `build` pass in it.

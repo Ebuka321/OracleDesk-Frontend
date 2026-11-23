@@ -1,0 +1,16 @@
+{
+  "id": "sim/market-core/insufficient-liquidity",
+  "source": "simulation",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "Error",
+    "message": "HostError: Error(Contract, #14)"
+  },
+  "expect": {
+    "kind": "contract",
+    "code": "InsufficientLiquidity",
+    "contract": "marketCore"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "sim/reasoning-registry/unauthorized",
+  "source": "simulation",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "Error",
+    "message": "HostError: Error(Contract, #2)"
+  },
+  "context": {
+    "contract": "reasoningRegistry"
+  },
+  "expect": {
+    "kind": "contract",
+    "code": "Unauthorized",
+    "contract": "reasoningRegistry"
+  }
+}

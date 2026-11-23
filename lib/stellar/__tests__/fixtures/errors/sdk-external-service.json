@@ -1,0 +1,14 @@
+{
+  "id": "sdk/external-service",
+  "source": "sdk",
+  "capturedWith": {
+    "sdk": "16.3.1"
+  },
+  "error": {
+    "name": "ExternalServiceError",
+    "message": "RPC request failed"
+  },
+  "expect": {
+    "kind": "network"
+  }
+}

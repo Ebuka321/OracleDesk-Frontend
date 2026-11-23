@@ -47,3 +47,33 @@ the commitment hash has to rebuild the XDR by hand. A no-op view function
 that takes a `ResolutionSpec`, or a `spec_hash(spec) -> BytesN<32>` view,
 would put the type in the spec and let clients ask the contract for the
 hash instead of re-implementing it.
+
+## 5. Add a share-budget sell quote
+
+The frontend converts "sell N shares" into `collateral_out` by binary-searching
+the contract's integer-rounded `calc_sell` math, then confirms the result with
+`quote_sell`. A view such as `quote_sell_shares(market_id, outcome, shares) ->
+{ collateral_out, shares_in }` would provide the exact inversion on-chain and
+avoid repeated local work and quote simulations.
+
+## 6. Expose treasury per-market exposure and the paused flag
+
+The `/portfolio` risk panel reads `get_config`, `daily_usage` and
+`available_capital` from the treasury. Two facts it would also show are only
+reachable from raw storage today: how much of `max_market` a market has used
+(`DataKey::Market(u64)` → `MarketExposure { amount, open }`), and whether the
+treasury is paused. Read-only getters `market_exposure(market_id) ->
+MarketExposure` and `paused() -> bool` would let the frontend show both
+without reading storage keys that the contract may change.
+
+## 7. Merge complete sets (`merge` entrypoint)
+
+A holder who owns both `YES` and `NO` shares on an open market cannot merge
+`min(yes, no)` pairs back into `1` base unit of collateral per complete set.
+Instead, exiting both legs requires calling `sell` on one side and then `sell`
+on the other against the post-trade reserves (`lib/portfolio/valuation.ts`).
+Because each `sell` pays `fee_bps` into the pool and increases the FPMM
+constant product, sequential two-sided exits lose value to fees and curve
+rounding compared with a direct `merge(trader, market_id, sets)` entrypoint
+that burns `sets` of `YES` and `NO` from the trader's position and returns
+`sets` of collateral.

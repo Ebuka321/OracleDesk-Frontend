@@ -1,8 +1,13 @@
-import { apiClient } from "./client";
-import type { MarketCategory, SettlementCurrency } from "./markets";
+import { apiClient, apiPath, type ApiRequestOptions } from "./client";
+import { assertValid, parseSlugId, parseUuid } from "@/lib/validation/ids";
+import type { MarketCategory, PaginationMeta, SettlementCurrency } from "./markets";
+
+const traceId = (id: string) => assertValid(parseUuid(id) ?? parseSlugId(id), "trace id");
 
 export type AgentType = "MARKET_MAKER" | "TRADER";
 export type UnlockType = "PER_TRACE" | "DAILY_PASS";
+/** What the caller currently has access to for a trace (docs/api.md `GET /traces/:id`). */
+export type TraceAccessLevel = "FREE_PREVIEW" | "PER_TRACE" | "DAILY_PASS" | "NO_ACCESS";
 
 export interface ReasoningSource {
   source: string;
@@ -12,6 +17,8 @@ export interface ReasoningSource {
 
 export interface ReasoningTrace {
   id: string;
+  agentId?: string;
+  action?: string;
   marketId: string;
   agentType: AgentType;
   decisionType: string;
@@ -26,7 +33,12 @@ export interface ReasoningTrace {
   /** reasoning-registry trace id; null until published on-chain. */
   onChainTraceId?: string | null;
   publishTxHash?: string | null;
-  accessLevel?: "FREE_PREVIEW" | "PER_TRACE" | "DAILY_PASS" | "NO_ACCESS";
+  accessLevel?: TraceAccessLevel;
+  /** Field names the backend locked for this caller's access level. */
+  lockedFields?: string[];
+  /** Per-trace unlock price in 7-decimal base units, as a decimal string. */
+  unlockPriceRaw?: string;
+  /** Daily-pass price in 7-decimal base units, as a decimal string. */
   dailyPassPriceRaw?: string;
   previewSources: ReasoningSource[] | null;
   sourcesUsed?: ReasoningSource[];
@@ -44,8 +56,22 @@ export interface ReasoningTrace {
 
 export interface ListTracesParams {
   agentType?: AgentType | "";
+  marketId?: string;
   page?: number;
   limit?: number;
+}
+
+/** The backend attaches pagination meta to list envelopes, but older
+ * deployments may omit it — narrow instead of trusting the shape. */
+export function isPaginationMeta(meta: unknown): meta is PaginationMeta {
+  if (typeof meta !== "object" || meta === null) return false;
+  const m = meta as Record<string, unknown>;
+  return (
+    typeof m.page === "number" &&
+    typeof m.limit === "number" &&
+    typeof m.total === "number" &&
+    typeof m.totalPages === "number"
+  );
 }
 
 export interface TraceVerification {
@@ -64,42 +90,141 @@ export interface SpendingAllowance {
   dailyLimit: number;
   perTraceLimit: number;
   currency: SettlementCurrency;
+  spentToday?: number;
+  lastResetAt?: string;
+  isActive?: boolean;
 }
 
-export async function listTraces(params: ListTracesParams = {}) {
-  const { data, meta } = await apiClient.get<ReasoningTrace[]>("/traces", { ...params });
-  return { traces: data, meta };
+/**
+ * A verified payment recorded by the backend (`GET /traces/payments`, the
+ * user's last 100 events, newest first). The backend enforces a unique
+ * `txHash`; `type`, `amountRaw` (7-decimal base units) and `createdAt` mirror
+ * the `POST /traces/:id/unlock` request and its verification, per docs/api.md.
+ * Only these fields are relied on for rendering; anything else stays optional.
+ */
+export interface PaymentEvent {
+  id?: string;
+  type: UnlockType | "REFUND" | string;
+  /** USDC moved by the verified transaction, in 7-decimal base units (empty string if backend omitted raw amount). */
+  amountRaw: string;
+  /** Legacy display float from backend; never used for export or transaction math. */
+  amount?: number;
+  /** 64-hex Stellar transaction hash; unique across all payments. */
+  txHash: string;
+  /** Backend trace id this payment was recorded against; null for pass-all payments. */
+  traceId?: string | null;
+  fromAddress?: string;
+  walletAddress?: string;
+  currency?: SettlementCurrency;
+  /** Backend verification state; absent on the unlock receipt shape. */
+  status?: "PENDING" | "CONFIRMED" | "FAILED" | string;
+  createdAt: string;
+  confirmedAt?: string | null;
 }
 
-export async function getTrace(id: string) {
-  const { data } = await apiClient.get<ReasoningTrace>(`/traces/${id}`);
+/**
+ * Runtime validator for backend `GET /traces/payments` rows.
+ * Rejects malformed entries while preserving `FAILED` and `PENDING` rows and
+ * rows where `amountRaw` was not recorded by the backend.
+ */
+export function parsePaymentEvent(raw: unknown): PaymentEvent | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.txHash !== "string" || r.txHash.trim().length === 0) return null;
+  if (typeof r.type !== "string" || r.type.trim().length === 0) return null;
+  if (typeof r.createdAt !== "string" || r.createdAt.trim().length === 0) {
+    return null;
+  }
+  const amountRaw =
+    typeof r.amountRaw === "string" && /^\d+$/.test(r.amountRaw.trim())
+      ? r.amountRaw.trim()
+      : "";
+  return {
+    ...(typeof r.id === "string" ? { id: r.id } : {}),
+    type: r.type,
+    amountRaw,
+    ...(typeof r.amount === "number" && Number.isFinite(r.amount)
+      ? { amount: r.amount }
+      : {}),
+    txHash: r.txHash.trim(),
+    traceId: typeof r.traceId === "string" ? r.traceId : null,
+    ...(typeof r.fromAddress === "string" ? { fromAddress: r.fromAddress } : {}),
+    ...(typeof r.walletAddress === "string"
+      ? { walletAddress: r.walletAddress }
+      : {}),
+    ...(r.currency === "USDC" ? { currency: "USDC" as const } : {}),
+    status: typeof r.status === "string" ? r.status : "CONFIRMED",
+    createdAt: r.createdAt,
+    confirmedAt: typeof r.confirmedAt === "string" ? r.confirmedAt : null,
+  };
+}
+
+export function validatePaymentEvents(rawList: unknown): {
+  events: PaymentEvent[];
+  invalidCount: number;
+} {
+  if (!Array.isArray(rawList)) {
+    return { events: [], invalidCount: rawList == null ? 0 : 1 };
+  }
+  const events: PaymentEvent[] = [];
+  let invalidCount = 0;
+  for (const item of rawList) {
+    const parsed = parsePaymentEvent(item);
+    if (parsed) {
+      events.push(parsed);
+    } else {
+      invalidCount += 1;
+    }
+  }
+  return { events, invalidCount };
+}
+
+export async function listTraces(params: ListTracesParams = {}, options?: ApiRequestOptions) {
+  const { data, meta } = await apiClient.get<ReasoningTrace[]>("/traces", { ...params }, options);
+  return { traces: data, meta: isPaginationMeta(meta) ? meta : undefined };
+}
+
+export async function getTrace(id: string, options?: ApiRequestOptions) {
+  const { data } = await apiClient.get<ReasoningTrace>(apiPath`/traces/${traceId(id)}`, undefined, options);
   return data;
 }
 
-export async function verifyTrace(traceId: string) {
+export async function verifyTrace(traceId: string, options?: ApiRequestOptions) {
   const { data } = await apiClient.post<TraceVerification>("/traces/verify", {
     traceId,
-  });
+  }, undefined, options);
 
   return data;
 }
+
+/** The backend unlock route needs a trace id in the path; a daily pass covers every trace. */
+export const DAILY_PASS_TRACE_PLACEHOLDER = "00000000-0000-0000-0000-000000000000";
 
 /**
  * Daily pass: after paying with a USDC transfer to PAYMENTS_RECIPIENT, hand
  * the backend the transaction hash; it verifies the transfer on-chain.
  * Per-trace unlocks go through the x402 service instead.
  */
-export async function unlockDailyPass(traceId: string, txHash: string, amountRaw: string) {
+export async function unlockDailyPass(id: string, txHash: string, amountRaw: string, options?: ApiRequestOptions) {
   const { data } = await apiClient.post<{
     subscription: unknown;
     trace: ReasoningTrace | null;
-  }>(`/traces/${traceId}/unlock`, { txHash, amountRaw, type: "DAILY_PASS" satisfies UnlockType });
+  }>(apiPath`/traces/${traceId(id)}/unlock`, { txHash, amountRaw, type: "DAILY_PASS" satisfies UnlockType }, undefined, options);
 
   return data;
 }
 
-export async function getSpendingAllowance() {
-  const { data } = await apiClient.get<SpendingAllowance | null>("/traces/access/allowance");
+/**
+ * Activates a daily pass for a paid transaction. The only place that knows the
+ * backend route still needs a placeholder trace id; swap the body once a
+ * dedicated pass endpoint exists.
+ */
+export function activateDailyPass(txHash: string, amountRaw: string) {
+  return unlockDailyPass(DAILY_PASS_TRACE_PLACEHOLDER, txHash, amountRaw);
+}
+
+export async function getSpendingAllowance(options?: ApiRequestOptions) {
+  const { data } = await apiClient.get<SpendingAllowance | null>("/traces/access/allowance", undefined, options);
   return data;
 }
 
@@ -107,12 +232,20 @@ export async function setSpendingAllowance(allowance: {
   dailyLimit: number;
   perTraceLimit: number;
   currency?: SettlementCurrency;
-}) {
-  const { data } = await apiClient.put<SpendingAllowance>("/traces/access/allowance", allowance);
+}, options?: ApiRequestOptions) {
+  const { data } = await apiClient.put<SpendingAllowance>("/traces/access/allowance", allowance, options);
   return data;
 }
 
-export async function getPaymentEvents() {
-  const { data } = await apiClient.get<unknown[]>("/traces/payments");
-  return data;
+export async function getPaymentEventsWithValidation(options?: ApiRequestOptions): Promise<{
+  events: PaymentEvent[];
+  invalidCount: number;
+}> {
+  const { data } = await apiClient.get<unknown>("/traces/payments", undefined, options);
+  return validatePaymentEvents(data);
+}
+
+export async function getPaymentEvents(options?: ApiRequestOptions): Promise<PaymentEvent[]> {
+  const { events } = await getPaymentEventsWithValidation(options);
+  return events;
 }

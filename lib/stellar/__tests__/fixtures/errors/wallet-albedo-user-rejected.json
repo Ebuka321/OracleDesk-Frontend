@@ -1,0 +1,16 @@
+{
+  "id": "wallet/albedo/user-rejected",
+  "source": "wallet",
+  "capturedWith": {
+    "sdk": "16.3.1",
+    "kit": "2.5.0",
+    "wallet": "albedo"
+  },
+  "error": {
+    "name": "UserRejectedError",
+    "message": "User rejected"
+  },
+  "expect": {
+    "kind": "rejected"
+  }
+}

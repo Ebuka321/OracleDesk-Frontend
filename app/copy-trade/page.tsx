@@ -1,18 +1,107 @@
 "use client";
+import { Icon } from "@/components/ui/icon";
 
-import React, { useState, useRef, useEffect, Suspense } from "react";
+import { SigningIdentities, TxReview, TxReviewPreferenceControl, shouldSkipTxReview } from "@/components/tx-review";
+import type { ReviewModel } from "@/lib/stellar/tx-decode";
+import { useSubmitQueueState } from "@/lib/stellar/submit-queue";
+
+
+import React, { useState, useRef, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useWallet } from "@/lib/contexts/WalletContext";
-import { getTrace, ReasoningTrace } from "@/lib/api/traces";
-import { confirmCopyTrade, initiateCopyTrade } from "@/lib/api/trade";
+import { useWalletActions, useWalletAddress, useWalletNetwork } from "@/lib/contexts/WalletContext";
+import { DevProfiler } from "@/lib/dev/profiler";
+import { useTrace } from "@/lib/hooks/useTraces";
+import { useViewedAddress } from "@/lib/hooks/useViewedAddress";
+import { useCopyTrade } from "@/lib/hooks/useCopyTrade";
+import { PendingCopyTrades } from "@/components/copy-trade/PendingCopyTrades";
 import { ApiError } from "@/lib/api/client";
+import { userMessage } from "@/lib/errors/display";
 import { useMarket } from "@/lib/hooks/useMarkets";
-import { useBuy, useQuoteBuy, useUsdcBalance } from "@/lib/hooks/useStellar";
-import { explorerTx } from "@/lib/stellar/config";
-import { formatUsdc, minOut, shareOf } from "@/lib/stellar/units";
+import { useQuoteBuy, useUsdcBalance, useAccountReserve, usePrepareBuy, useOnChainMarket, fetchOnChainMarketBySimulation, useUsdcTrustline, useEnableUsdc, useUsdcBalanceState, type PreparedWriteReview } from "@/lib/hooks/useStellar";
+import { explorerTx, NETWORK_LABEL } from "@/lib/stellar/config";
+import { parseCopyTradeParams, routes } from "@/lib/routes";
+import { formatUsdc, formatXlm, minOut, bpsToPercent, probabilityToBps, tryParseUsdc, BPS } from "@/lib/stellar/units";
+import { chooseCollateral, maxCollateralForEdge, quoteCopy, type CopyMarket, type CopyQuote, type SizingMode } from "@/lib/stellar/quote";
+import type { OutcomeTag } from "@/lib/stellar/clients";
+import { TxPhase } from "@/lib/stellar/tx-lifecycle";
 
 /** Wait this long after the slider stops before asking for a new quote. */
+import { getLedgerNow, useLedgerNow } from "@/lib/stellar/ledger-clock";
+import { MIN_TX_TIMEOUT_S, SAFETY_MARGIN_S } from "@/lib/stellar/deadline";
+import { PendingValue } from "@/components/pending-value";
+import { SLIPPAGE_PRESET_BPS } from "@/lib/settings/settings";
+import { useSettings } from "@/lib/settings/useSettings";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { LiveRegion } from "@/components/ui/live-region";
+import { useDirection } from "@/components/layout/DirectionProvider";
+import { Ltr } from "@/components/ui/ltr";
+import Link from "next/link";
 const QUOTE_DEBOUNCE_MS = 400;
+/** Below this remaining edge (1 point) the user must tick a box before copying. */
+const MIN_EDGE_WARN_BPS = 100n;
+
+const SIZING_OPTIONS = [
+  { kind: "percent", label: "% of balance" },
+  { kind: "fixed", label: "Fixed USDC" },
+  { kind: "mirror", label: "Mirror agent" },
+] as const;
+type SizingKind = (typeof SIZING_OPTIONS)[number]["kind"];
+
+function copyMarketOf(market: { reserve_yes: bigint; reserve_no: bigint; fee_bps: number | bigint; sets_minted: bigint }): CopyMarket {
+  return { reserveYes: market.reserve_yes, reserveNo: market.reserve_no, feeBps: BigInt(market.fee_bps), setsMinted: market.sets_minted };
+}
+
+/** The agent's probability as bps, or null when the backend sent something out of range. */
+function estimateToBps(probability: number): bigint | null {
+  try {
+    return probabilityToBps(probability);
+  } catch {
+    return null;
+  }
+}
+
+function tryQuoteCopy(
+  market: CopyMarket | null,
+  side: OutcomeTag | null,
+  amount: bigint | null,
+  estimateYesBps: bigint | null,
+): CopyQuote | null {
+  if (!market || !side || amount === null || amount <= 0n || estimateYesBps === null) return null;
+  try {
+    return quoteCopy(market, side, amount, estimateYesBps);
+  } catch {
+    return null;
+  }
+}
+
+const formatEdge = (bps: bigint) => `${bps >= 0n ? "+" : ""}${(Number(bps) / 100).toFixed(1)} pts`;
+
+function renderTxPhase(phase: TxPhase): string | null {
+  switch (phase.name) {
+    case "building":
+      return null;
+    case "simulating":
+      return "Simulating transaction…";
+    case "awaiting-signature":
+      return "Waiting for your wallet…";
+    case "submitting":
+      return "Sending to the network…";
+    case "pending":
+      return "Waiting for a ledger…";
+    case "confirmed":
+      return "Transaction confirmed.";
+    case "failed":
+      return userMessage(phase.error);
+    case "expired":
+      return "Transaction expired without confirmation.";
+  }
+}
 
 function useDebounced<T>(value: T, ms: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -24,49 +113,136 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 function CopyTradeContent() {
-  const { address, isConnected, isWrongNetwork, openModal, ensureSession } = useWallet();
+  const { address, isConnected } = useWalletAddress();
+  const { isWrongNetwork } = useWalletNetwork();
+  const { openModal, ensureSession } = useWalletActions();
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const traceId = searchParams.get("traceId");
-  const marketIdParam = searchParams.get("marketId");
+  const parsedParams = parseCopyTradeParams(searchParams);
+  const traceId = parsedParams.ok ? parsedParams.traceId : null;
+  const marketIdParam = parsedParams.ok ? parsedParams.marketId : null;
+  const invalidTraceLink = !parsedParams.ok && parsedParams.invalid.includes("traceId");
 
-  const [trace, setTrace] = useState<ReasoningTrace | null>(null);
-  const [traceError, setTraceError] = useState<string | null>(null);
+  const traceQuery = useTrace(traceId ?? undefined);
+  const trace = traceQuery.data ?? null;
+  const traceError = invalidTraceLink
+    ? "This link has an invalid trace id."
+    : traceQuery.isError ? "We couldn't load this reasoning trace." : null;
   const { data: market } = useMarket(marketIdParam ?? trace?.marketId ?? undefined);
   const onChainMarketId = market?.onChainMarketId ?? null;
+  const onChainMarket = useOnChainMarket(onChainMarketId);
 
+  const { viewed, isWatching } = useViewedAddress();
+  const dir = useDirection();
   const balance = useUsdcBalance(address);
-  const buy = useBuy();
+  const balanceState = useUsdcBalanceState(address);
+  const ledger = useLedgerNow();
+  const trustline = useUsdcTrustline(address);
+  const enableUsdc = useEnableUsdc();
+  const trustlineMissing = trustline.data?.kind === "missing";
+  const trustlineReady = trustline.data?.kind === "native" || (trustline.data?.kind === "present" && trustline.data.authorized);
+  const marketCanTrade = onChainMarket.data?.market.status.tag === "Open" && ledger.now !== null && Number(onChainMarket.data.market.close_time) - ledger.now > SAFETY_MARGIN_S + MIN_TX_TIMEOUT_S;
+  const reserve = useAccountReserve(address);
+  const buy = useCopyTrade();
+  const submitQueue = useSubmitQueueState(address);
 
   // Allocation as a share of the wallet's USDC balance, in basis points.
   const [allocationBps, setAllocationBps] = useState(1250);
-  const [slippage, setSlippage] = useState(1.0);
+  const [sizingKind, setSizingKind] = useState<SizingKind>("percent");
+  const [fixedInput, setFixedInput] = useState("");
+  const [capInput, setCapInput] = useState("");
+  const [acknowledgeThinEdge, setAcknowledgeThinEdge] = useState(false);
+  // Slippage starts from the saved default (/settings); the picker below is a
+  // per-trade override that never writes back to settings.
+  const { settings } = useSettings(address);
+  const [slippageOverrideBps, setSlippageOverrideBps] = useState<number | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [reviewModel, setReviewModel] = useState<{ model: ReviewModel; changedFrom?: ReviewModel } | null>(null);
+  const reviewResolver = useRef<((approved: boolean) => void) | null>(null);
   const sliderRef = useRef<HTMLDivElement>(null);
+  const allocationControlRef = useRef<HTMLButtonElement | null>(null);
+  const reviewPreparedBuy = useCallback<PreparedWriteReview>(async (_prepared, model, changedFrom, forceReview = false) => {
+    if (!forceReview && shouldSkipTxReview()) return true;
+    return new Promise<boolean>((resolve) => {
+      reviewResolver.current = resolve;
+      setReviewModel({ model, changedFrom });
+    });
+  }, []);
+  const closeReview = useCallback((approved: boolean) => {
+    setReviewModel(null);
+    const resolve = reviewResolver.current;
+    reviewResolver.current = null;
+    resolve?.(approved);
+  }, []);
 
-  useEffect(() => {
-    if (!traceId) return;
-    getTrace(traceId)
-      .then(setTrace)
-      .catch(() => setTraceError("We couldn't load this reasoning trace."));
-  }, [traceId]);
+  useEffect(
+    () => () => {
+      const resolve = reviewResolver.current;
+      reviewResolver.current = null;
+      resolve?.(false);
+    },
+    [],
+  );
 
   // Side comes from the trace's edge. No trace or zero edge means no trade.
   const side: "Yes" | "No" | null = trace && trace.edge !== 0 ? (trace.edge > 0 ? "Yes" : "No") : null;
+  const buyLabel = side && onChainMarketId ? `Buy ${side} on #${onChainMarketId}` : "";
+  const waitingForBuy =
+    submitQueue.waiting.some((job) => job.label === buyLabel) ||
+    (submitQueue.lockWaiting && submitQueue.running?.label === buyLabel);
   const allocation = allocationBps / 100;
-  const amountRaw = balance.data !== undefined ? shareOf(balance.data, allocationBps) : null;
-  const slippageBps = Math.round(slippage * 100);
+  const fixedAmount = tryParseUsdc(fixedInput);
+  const userCap = tryParseUsdc(capInput);
+  const sizingMode: SizingMode =
+    sizingKind === "fixed"
+      ? { kind: "fixed", amount: fixedAmount ?? 0n }
+      : sizingKind === "mirror"
+        ? { kind: "mirror", betFraction: trace?.betFraction }
+        : { kind: "percent", bps: allocationBps };
+  const choice = balance.data !== undefined ? chooseCollateral(sizingMode, { balance: balance.data, userCap }) : null;
+  const amountRaw = choice ? choice.amount : null;
+  const slippageBps = slippageOverrideBps ?? settings.slippageBps;
+
+  // The agent's estimate and the copy's own cost on the current reserves, all in bigint bps.
+  const estimateYesBps = trace ? estimateToBps(trace.probabilityEstimate) : null;
+  const estimateSideBps = estimateYesBps === null || !side ? null : side === "Yes" ? estimateYesBps : BPS - estimateYesBps;
+  const copyMarket = onChainMarket.data ? copyMarketOf(onChainMarket.data.market) : null;
+  const localQuote = tryQuoteCopy(copyMarket, side, amountRaw, estimateYesBps);
+  const maxForEdge =
+    copyMarket && side && estimateYesBps !== null && balance.data !== undefined
+      ? maxCollateralForEdge(copyMarket, side, estimateYesBps, MIN_EDGE_WARN_BPS, balance.data)
+      : null;
+  const edgeBlocked = localQuote !== null && localQuote.edgeAfterBps <= 0n;
+  const thinEdge = localQuote !== null && localQuote.edgeAfterBps > 0n && localQuote.edgeAfterBps < MIN_EDGE_WARN_BPS;
 
   const debouncedAmount = useDebounced(amountRaw, QUOTE_DEBOUNCE_MS);
   const quote = useQuoteBuy(onChainMarketId, side ?? "Yes", side ? debouncedAmount : null);
   const minShares = quote.data !== undefined ? minOut(quote.data, slippageBps) : null;
+  const prepareBuy = usePrepareBuy({
+    marketId: onChainMarketId,
+    outcome: side ?? "Yes",
+    collateralIn: side ? debouncedAmount : null,
+    slippageBps,
+    holder: address,
+  });
+
+  const fees = prepareBuy.data?.fees;
+  const isUnfunded = Boolean(reserve.data && !reserve.data.funded);
+  const isInsufficientXlm = Boolean(
+    reserve.data?.funded &&
+    fees &&
+    reserve.data.spendable < fees.totalFee
+  );
+  const xlmDeficit = (reserve.data?.funded && fees && fees.totalFee > reserve.data.spendable)
+    ? fees.totalFee - reserve.data.spendable
+    : null;
 
   const handleSliderInteraction = (clientX: number) => {
     if (!sliderRef.current) return;
     const rect = sliderRef.current.getBoundingClientRect();
-    const x = clientX - rect.left;
+    const x = dir === "rtl" ? rect.right - clientX : clientX - rect.left;
     const percentage = Math.max(0, Math.min(100, (x / rect.width) * 100));
     setAllocationBps(Math.round(percentage * 100));
   };
@@ -88,8 +264,10 @@ function CopyTradeContent() {
 
   const onSliderKey = (e: React.KeyboardEvent) => {
     const step = e.shiftKey ? 1000 : 100;
-    if (e.key === "ArrowRight" || e.key === "ArrowUp") setAllocationBps((v) => Math.min(10_000, v + step));
-    if (e.key === "ArrowLeft" || e.key === "ArrowDown") setAllocationBps((v) => Math.max(0, v - step));
+    const incKey = dir === "rtl" ? "ArrowLeft" : "ArrowRight";
+    const decKey = dir === "rtl" ? "ArrowRight" : "ArrowLeft";
+    if (e.key === incKey || e.key === "ArrowUp") setAllocationBps((v) => Math.min(10_000, v + step));
+    if (e.key === decKey || e.key === "ArrowDown") setAllocationBps((v) => Math.max(0, v - step));
   };
 
   const handleConfirm = async () => {
@@ -99,7 +277,7 @@ function CopyTradeContent() {
       return;
     }
     if (isWrongNetwork) {
-      setStatusMessage("Switch your wallet to Stellar Testnet to place this trade.");
+      setStatusMessage(`Switch your wallet to ${NETWORK_LABEL} to place this trade.`);
       return;
     }
     if (!trace || !side) {
@@ -112,6 +290,24 @@ function CopyTradeContent() {
     }
     if (!onChainMarketId || !market) {
       setStatusMessage("This market isn't on-chain yet, so it can't be traded.");
+      return;
+    }
+    if (!onChainMarket.data) {
+      setStatusMessage("Checking the on-chain market and ledger time…");
+      return;
+    }
+    if (!marketCanTrade) {
+      setStatusMessage("This market is closed or too close to its deadline to safely place a trade.");
+      return;
+    }
+    if (!trustlineReady) {
+      setStatusMessage(
+        trustlineMissing
+          ? "Enable your USDC trustline before copying this trade."
+          : trustline.data?.kind === "present"
+            ? "The issuer hasn't authorized your USDC trustline."
+            : "Checking your USDC trustline…",
+      );
       return;
     }
     if (!amountRaw || amountRaw <= 0n) {
@@ -127,80 +323,100 @@ function CopyTradeContent() {
         return;
       }
 
-      setStatusMessage("Recording your copy trade…");
-      const { copyTradeId } = await initiateCopyTrade({
-        traceId: trace.id,
-        marketId: market.id,
-        amountRaw: amountRaw.toString(),
-      });
+      const freshMarket = await fetchOnChainMarketBySimulation(onChainMarketId);
+      const freshLedgerNow = getLedgerNow();
+      if (
+        freshLedgerNow === null ||
+        freshMarket.market.status.tag !== "Open" ||
+        BigInt(Math.floor(freshLedgerNow)) + BigInt(SAFETY_MARGIN_S + MIN_TX_TIMEOUT_S) >= freshMarket.market.close_time
+      ) {
+        setStatusMessage("This market is closed or too close to its deadline to safely place a trade.");
+        return;
+      }
 
-      setStatusMessage("Getting a fresh quote, then asking your wallet to sign…");
-      const result = await buy.mutateAsync({
+      // Re-check against fresh chain state before anything is recorded or signed.
+      const freshBalance = await balance.refetch();
+      const freshAmount = chooseCollateral(sizingMode, { balance: freshBalance.data ?? 0n, userCap }).amount;
+      if (freshAmount !== amountRaw) {
+        setStatusMessage("Your balance changed, so the amount is different now. Check it and confirm again.");
+        return;
+      }
+      const freshQuote = tryQuoteCopy(copyMarketOf(freshMarket.market), side, amountRaw, estimateYesBps);
+      if (!freshQuote) {
+        setStatusMessage("This amount can't be quoted on the current market. Try a smaller amount.");
+        return;
+      }
+      if (freshQuote.edgeAfterBps <= 0n) {
+        setStatusMessage("The market has moved past the agent's estimate, so copying now would buy with no edge. Nothing was sent.");
+        return;
+      }
+      if (freshQuote.edgeAfterBps < MIN_EDGE_WARN_BPS && !acknowledgeThinEdge) {
+        setStatusMessage("The remaining edge is thin. Tick the box above to confirm you still want to copy this trade.");
+        return;
+      }
+
+      setStatusMessage("Recording your copy trade…");
+      const result = await buy.run({
+        traceId: trace.id,
+        backendMarketId: market.id,
         marketId: onChainMarketId,
         outcome: side,
         collateralIn: amountRaw,
         slippageBps,
+        prepared: prepareBuy.data,
+        review: reviewPreparedBuy,
       });
 
-      if (result.txHash) await confirmCopyTrade(copyTradeId, result.txHash).catch(() => undefined);
       setStatusMessage(
-        `Done. You received ${formatUsdc(result.sharesOut, { maxDecimals: 2 })} ${side.toUpperCase()} shares.` +
+        (result.durable ? "Trade done; recording will retry automatically. " : "Trade done; browser storage is unavailable, so keep this tab open to finish recording. ") +
+        `You received ${formatUsdc(result.sharesOut, { maxDecimals: 2 })} ${side.toUpperCase()} shares.` +
           (result.txHash ? ` Transaction ${result.txHash.slice(0, 10)}…` : ""),
       );
-      if (result.txHash) window.open(explorerTx(result.txHash), "_blank", "noopener,noreferrer");
+      const explorerUrl = result.txHash ? explorerTx(result.txHash) : null;
+      if (explorerUrl) window.open(explorerUrl, "_blank", "noopener,noreferrer");
     } catch (error) {
-      if (error instanceof ApiError && error.code === "TRACE_LOCKED") {
-        setStatusMessage("Unlock this trace before copying it.");
-      } else {
-        setStatusMessage(error instanceof Error ? error.message : "The trade didn't go through. Please try again.");
-      }
+      setStatusMessage(userMessage(error));
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const handleEnableUsdc = async () => {
+    setStatusMessage("Checking XLM reserve, then opening your wallet…");
+    try {
+      await enableUsdc.mutateAsync();
+      setStatusMessage("USDC is enabled. Click Confirm Copy Trade when you're ready.");
+    } catch (error) {
+      setStatusMessage(userMessage(error));
+    }
+  };
+
   return (
     <div className="bg-background text-on-surface min-h-screen flex flex-col">
-      <style jsx global>{`
-        .ai-shimmer {
-          background: linear-gradient(
-            90deg,
-            rgba(145, 215, 238, 0.1) 0%,
-            rgba(145, 215, 238, 0.2) 50%,
-            rgba(145, 215, 238, 0.1) 100%
-          );
-          background-size: 200% 100%;
-          animation: shimmer 3s infinite linear;
-        }
-        @keyframes shimmer {
-          0% { background-position: 200% 0; }
-          100% { background-position: -200% 0; }
-        }
-      `}</style>
 
       <main className="flex-grow flex items-center justify-center p-4 sm:p-margin relative">
-        <div className="fixed inset-0 bg-on-background/10 backdrop-blur-sm z-[55]"></div>
-
-        <div className="relative bg-surface border border-outline-variant w-full max-w-[640px] shadow-xl rounded-xl overflow-hidden z-[60] animate-in fade-in zoom-in duration-300">
-          <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-white">
-            <div>
-              <h2 className="font-headline-md text-headline-md text-on-surface">Confirm Copy Trade</h2>
-              <p className="font-body-md text-body-md text-on-surface-variant text-sm">Copy the agent&apos;s side on this market</p>
+        <LiveRegion message={statusMessage ?? ""} />
+        <Dialog open onOpenChange={(open) => !open && router.back()}>
+          <DialogContent
+            initialFocusRef={allocationControlRef}
+            className="relative bg-surface border border-outline-variant w-full max-w-[640px] shadow-xl rounded-xl overflow-hidden p-0 max-h-[90vh] overflow-y-auto"
+          >
+            <div className="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-white">
+              <div>
+                <DialogTitle className="font-headline-md text-headline-md text-on-surface">Confirm Copy Trade</DialogTitle>
+                <DialogDescription className="font-body-md text-body-md text-on-surface-variant text-sm">Copy the agent&apos;s side on this market</DialogDescription>
+              </div>
+              <DialogClose asChild>
+                <button aria-label="Close" className="p-2 hover:bg-surface-container rounded-full transition-colors" type="button">
+                  <Icon name="close" />
+                </button>
+              </DialogClose>
             </div>
-            <button 
-              className="material-symbols-outlined p-2 hover:bg-surface-container rounded-full transition-colors" 
-              type="button"
-              aria-label="Close"
-              onClick={() => router.back()}
-            >
-              close
-            </button>
-          </div>
 
           <div className="bg-[#f0f9fa] border-b border-outline-variant p-6 relative overflow-hidden ai-shimmer text-xs sm:text-sm">
             <div className="flex items-start gap-4">
               <div className="bg-primary-container p-2 rounded-lg flex-shrink-0">
-                <span className="material-symbols-outlined text-on-primary-container" style={{ fontVariationSettings: "'FILL' 1" }}>psychology</span>
+                <Icon name="psychology" filled className="text-on-primary-container" />
               </div>
               <div>
                 <span className="font-label-caps text-label-caps text-primary-container mb-1 block">
@@ -248,12 +464,89 @@ function CopyTradeContent() {
             </div>
 
             <div className="space-y-3">
+              {isWatching && !isConnected && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900 font-medium">
+                  Watching with no wallet connected. Connect your own wallet to size allocations and trade.
+                </div>
+              )}
               <div className="flex justify-between items-end flex-wrap gap-2">
-                <label className="font-label-caps text-label-caps text-on-surface-variant uppercase text-[10px]">Share of your USDC balance (%)</label>
+                <label className="font-label-caps text-label-caps text-on-surface-variant uppercase text-[10px]">Amount to copy</label>
                 <span className="font-data-mono text-data-mono text-primary font-bold text-xs sm:text-sm">
-                  {allocation.toFixed(2)}% ({amountRaw !== null ? `${formatUsdc(amountRaw, { maxDecimals: 2, minDecimals: 2, grouping: true })} USDC` : isConnected ? "loading balance…" : "connect a wallet"})
+                  {amountRaw !== null ? <Ltr>{`${formatUsdc(amountRaw, { maxDecimals: 2, minDecimals: 2, grouping: true })} USDC`}</Ltr> : isConnected ? "loading balance…" : "connect a wallet"}
+                  {choice && choice.limitedBy !== "none" && (
+                    <span className="block text-[10px] font-normal text-on-surface-variant">limited by your {choice.limitedBy}</span>
+                  )}
+                  <PendingValue state={balanceState.data} />
                 </span>
               </div>
+              <div role="radiogroup" aria-label="How much to copy" className="grid grid-cols-3 gap-2">
+                {SIZING_OPTIONS.map((option, idx) => (
+                  <button
+                    key={option.kind}
+                    ref={idx === 0 ? allocationControlRef : undefined}
+                    type="button"
+                    role="radio"
+                    aria-checked={sizingKind === option.kind}
+                    disabled={isWatching && !isConnected}
+                    onClick={() => setSizingKind(option.kind)}
+                    className={`px-3 py-2 text-[11px] font-bold border rounded transition-all ${
+                      sizingKind === option.kind
+                        ? "border-primary border-2 bg-white text-primary"
+                        : "border-outline-variant bg-white hover:border-primary text-on-surface-variant"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {sizingKind === "fixed" && (
+                <div className="space-y-1">
+                  <label htmlFor="fixed-amount" className="text-[11px] text-on-surface-variant">Amount in USDC</label>
+                  <input
+                    id="fixed-amount"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={fixedInput}
+                    disabled={isWatching && !isConnected}
+                    onChange={(e) => setFixedInput(e.target.value)}
+                    placeholder="e.g. 25"
+                    aria-invalid={fixedInput.trim() !== "" && fixedAmount === null}
+                    className="w-full border border-outline-variant rounded px-3 py-2 font-data-mono text-sm bg-white disabled:opacity-50"
+                  />
+                  {fixedInput.trim() !== "" && fixedAmount === null && (
+                    <p className="text-[11px] text-error">Enter an amount like 10 or 2.5 (up to 7 decimal places).</p>
+                  )}
+                </div>
+              )}
+              {sizingKind === "mirror" && (
+                <p className="text-[11px] text-on-surface-variant">
+                  {typeof trace?.betFraction === "number" ? (
+                    `The agent bet ${(trace.betFraction * 100).toFixed(1)}% of its bankroll. You copy the same share of your balance, capped as below.`
+                  ) : (
+                    <>Unlock this trace to mirror the agent&apos;s size. <Link href={routes.premium()} className="underline">See access options</Link></>
+                  )}
+                </p>
+              )}
+              <div className="space-y-1">
+                <label htmlFor="trade-cap" className="text-[11px] text-on-surface-variant">Never spend more than (USDC, optional)</label>
+                <input
+                  id="trade-cap"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={capInput}
+                  disabled={isWatching && !isConnected}
+                  onChange={(e) => setCapInput(e.target.value)}
+                  placeholder="No cap"
+                  aria-invalid={capInput.trim() !== "" && userCap === null}
+                  className="w-full border border-outline-variant rounded px-3 py-2 font-data-mono text-sm bg-white disabled:opacity-50"
+                />
+                {capInput.trim() !== "" && userCap === null && (
+                  <p className="text-[11px] text-error">Enter an amount like 10 or 2.5.</p>
+                )}
+              </div>
+              {choice?.unavailable && sizingKind === "mirror" && <p className="text-[11px] text-error">{choice.unavailable}</p>}
+              {sizingKind === "percent" && (
+              <>
               <div
                 ref={sliderRef}
                 className="relative h-2 bg-surface-container rounded-full cursor-pointer touch-none focus:outline-none focus:ring-2 focus:ring-primary"
@@ -261,15 +554,16 @@ function CopyTradeContent() {
                 tabIndex={0}
                 aria-label="Share of your USDC balance"
                 aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Number(allocation.toFixed(2))}
+                aria-valuemax={10000}
+                aria-valuenow={allocationBps}
+                aria-valuetext={`${bpsToPercent(allocationBps, 2)} of your balance${amountRaw !== null ? `, ${formatUsdc(amountRaw, { maxDecimals: 2, minDecimals: 2, grouping: true })} USDC` : ""}`}
                 onKeyDown={onSliderKey}
                 onMouseDown={onMouseDown}
                 onTouchStart={(e) => handleSliderInteraction(e.touches[0].clientX)}
                 onTouchMove={onTouchMove}
               >
-                <div className="absolute inset-y-0 left-0 bg-primary-container rounded-full" style={{ width: `${allocation}%` }}></div>
-                <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-primary border-2 border-white rounded-full shadow-md" style={{ left: `calc(${allocation}% - 8px)` }}></div>
+                <div className="absolute inset-y-0 bg-primary-container rounded-full" style={{ insetInlineStart: 0, width: `${allocation}%` }}></div>
+                <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-primary border-2 border-white rounded-full shadow-md" style={{ insetInlineStart: `calc(${allocation}% - 8px)` }}></div>
               </div>
               <div className="flex justify-between text-[10px] font-medium text-on-surface-variant px-1">
                 <span>0%</span>
@@ -278,45 +572,73 @@ function CopyTradeContent() {
                 <span>75%</span>
                 <span>100%</span>
               </div>
+              </>
+              )}
             </div>
 
             <div className="p-4 bg-surface-container-low rounded-lg space-y-4">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-outline text-sm">settings</span>
-                  <span className="font-label-caps text-label-caps text-on-surface-variant uppercase text-[10px]">Slippage Tolerance</span>
+                  <Icon name="settings" className="text-outline text-sm" />
+                  <span className="font-label-caps text-label-caps text-on-surface-variant uppercase text-[10px]">
+                    Slippage Tolerance ({bpsToPercent(slippageBps)})
+                  </span>
                 </div>
                 <div className="flex gap-2 w-full sm:w-auto">
-                  {[0.5, 1.0, 3.0].map((val) => (
+                  {SLIPPAGE_PRESET_BPS.map((bps) => (
                     <button
-                      key={val}
-                      onClick={() => setSlippage(val)}
+                      key={bps}
+                      onClick={() => setSlippageOverrideBps(bps)}
                       className={`flex-1 sm:flex-none px-3 py-1 text-[11px] font-bold border rounded transition-all ${
-                        slippage === val
+                        slippageBps === bps
                           ? "border-primary border-2 bg-white text-primary"
                           : "border-outline-variant bg-white hover:border-primary text-on-surface-variant"
                       }`}
                     >
-                      {val}%
+                      {bpsToPercent(bps)}
                     </button>
                   ))}
                 </div>
               </div>
+              {slippageOverrideBps === null && (
+                <p className="text-[11px] text-on-surface-variant">
+                  Using your default from Settings. Pick a value above to override it for this trade only.
+                </p>
+              )}
               <div className="pt-4 border-t border-outline-variant flex justify-between items-center gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-outline text-sm">query_stats</span>
+                  <Icon name="query_stats" className="text-outline text-sm" />
                   <span className="font-label-caps text-label-caps text-on-surface-variant uppercase text-[10px]">Expected shares</span>
                 </div>
-                <div className="text-right font-data-mono text-xs">
+                <div className="text-end font-data-mono text-xs">
                   {quote.data !== undefined && minShares !== null ? (
                     <>
                       <span className="text-on-surface font-bold">{formatUsdc(quote.data, { maxDecimals: 2 })}</span>
-                      <span className="block text-[10px] text-on-surface-variant">at least {formatUsdc(minShares, { maxDecimals: 2 })} after slippage</span>
+                      <span className="block text-[10px] text-on-surface-variant">
+                        at least {formatUsdc(minShares, { maxDecimals: 2 })} after slippage
+                        {fees && (
+                          <span
+                            className="block text-[10px] text-on-surface-variant mt-1"
+                            title={`Inclusion: ${formatXlm(fees.inclusionFee)} XLM · Resource: ${formatXlm(fees.resourceFee)} XLM (assumes the network base reserve of 0.5 XLM)`}
+                          >
+                            Network fee ≈ {formatXlm(fees.totalFee)} XLM ·{" "}
+                            {reserve.isLoading
+                              ? "checking XLM…"
+                              : reserve.isError
+                              ? "couldn't check XLM balance"
+                              : reserve.data && !reserve.data.funded
+                              ? "unfunded"
+                              : reserve.data
+                              ? `spendable ${formatXlm(reserve.data.spendable, { maxDecimals: 1 })} XLM`
+                              : "spendable —"}
+                          </span>
+                        )}
+                      </span>
                     </>
                   ) : quote.isFetching ? (
                     <span className="text-on-surface-variant">Quoting…</span>
                   ) : quote.error ? (
-                    <span className="text-error">{quote.error.message}</span>
+                    <span className="text-error">{userMessage(quote.error)}</span>
                   ) : (
                     <span className="text-on-surface-variant">—</span>
                   )}
@@ -325,11 +647,86 @@ function CopyTradeContent() {
             </div>
 
             <div className="space-y-3">
-              {statusMessage ? (
-                <div className="rounded-2xl border border-outline-variant bg-surface p-4 text-sm text-on-surface-variant">
-                  {statusMessage}
+              {localQuote && estimateSideBps !== null && (
+                <div className="p-4 border border-outline-variant rounded-lg bg-white space-y-2">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 font-data-mono text-xs text-on-surface-variant">
+                    <span>Agent estimate <span className="font-bold text-on-surface">{bpsToPercent(estimateSideBps)}</span></span>
+                    <span>Your avg price <span className="font-bold text-on-surface">{bpsToPercent(localQuote.avgPriceBps)}</span></span>
+                    <span className={localQuote.edgeAfterBps > 0n ? "font-bold text-secondary" : "font-bold text-error"}>
+                      Remaining edge {formatEdge(localQuote.edgeAfterBps)}
+                    </span>
+                  </div>
+                  {maxForEdge !== null && amountRaw !== null && maxForEdge > 0n && maxForEdge < amountRaw && (
+                    <button
+                      type="button"
+                      className="text-xs text-primary underline"
+                      onClick={() => {
+                        setSizingKind("fixed");
+                        setFixedInput(formatUsdc(maxForEdge, { maxDecimals: 2 }));
+                      }}
+                    >
+                      Use max with edge ({formatUsdc(maxForEdge, { maxDecimals: 2 })} USDC keeps at least {formatEdge(MIN_EDGE_WARN_BPS)})
+                    </button>
+                  )}
+                  {quote.data !== undefined && quote.data !== localQuote.sharesOut && (
+                    <p className="text-[11px] text-on-surface-variant">Price moved, recalculated from the chain. The on-chain quote is used for the minimum shares.</p>
+                  )}
                 </div>
-              ) : null}
+              )}
+
+              {/* Blocking warnings */}
+              {edgeBlocked && (
+                <div className="rounded-2xl border border-error/20 bg-error-container/10 p-3 text-xs text-error font-medium" role="alert">
+                  The market has moved past the agent&apos;s estimate, so copying now would buy with no edge.
+                </div>
+              )}
+              {thinEdge && localQuote && (
+                <label className="flex items-start gap-2 rounded-2xl border border-outline-variant bg-surface p-3 text-xs text-on-surface">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={acknowledgeThinEdge}
+                    onChange={(e) => setAcknowledgeThinEdge(e.target.checked)}
+                  />
+                  <span>The remaining edge is only {formatEdge(localQuote.edgeAfterBps)}. I still want to copy this trade.</span>
+                </label>
+              )}
+              {isConnected && isUnfunded && (
+                <div className="rounded-2xl border border-error/20 bg-error-container/10 p-3 text-xs text-error font-medium" role="alert">
+                  Fund this account with XLM first.
+                </div>
+              )}
+              {isConnected && isInsufficientXlm && xlmDeficit !== null && (
+                <div className="rounded-2xl border border-error/20 bg-error-container/10 p-3 text-xs text-error font-medium" role="alert">
+                  You need about {formatXlm(xlmDeficit)} more XLM to pay the network fee.
+                </div>
+              )}
+
+              {/* Tx phase tracking */}
+              {buy.isPending && (
+                <div className="rounded-2xl border border-outline-variant bg-surface p-4 text-sm text-on-surface-variant flex items-center justify-between" role="status">
+                  <span>{renderTxPhase(buy.phase) ?? statusMessage ?? "Processing copy trade…"}</span>
+                  {"hash" in buy.phase && buy.phase.hash && (
+                    <a
+                      href={explorerTx(buy.phase.hash) ?? undefined}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline font-data-mono text-xs"
+                    >
+                      View: {buy.phase.hash.slice(0, 8)}…
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {/* Status message when not pending */}
+              <PendingCopyTrades />
+              {!buy.isPending && statusMessage && (
+                <div className="rounded-2xl border border-outline-variant bg-surface p-4 text-sm text-on-surface-variant">
+                  {waitingForBuy ? "Waiting for your previous transaction to finish…" : statusMessage}
+                </div>
+              )}
+              <SigningIdentities keys={["marketCore", "usdc"]} compact />
               <div className="flex gap-3">
                 <button
                   className="flex-1 border border-outline text-on-surface py-4 rounded-lg font-headline-sm text-headline-sm hover:bg-surface-variant transition-all"
@@ -342,19 +739,54 @@ function CopyTradeContent() {
                   className="flex-[2] bg-[#005f73] text-primary-foreground py-4 rounded-lg font-headline-sm text-headline-sm shadow-lg shadow-primary-container/20 hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={handleConfirm}
                   type="button"
-                  disabled={isSubmitting || !side}
+                  disabled={
+                    isSubmitting ||
+                    buy.isPending ||
+                    isWatching ||
+                    !side ||
+                    edgeBlocked ||
+                    (thinEdge && !acknowledgeThinEdge) ||
+                    (isConnected && isUnfunded) ||
+                    (isConnected && isInsufficientXlm)
+                  }
+                  aria-describedby={isWatching ? "watching-copy-desc" : undefined}
                 >
-                  <span className="material-symbols-outlined text-xl">bolt</span>
-                  {isSubmitting ? "Submitting..." : "Confirm Copy Trade"}
+                  <Icon name="bolt" className="text-xl" />
+                  {isWatching
+                    ? "Watching. Connect your own wallet to trade."
+                    : isSubmitting || buy.isPending
+                    ? (buy.phase.name === "awaiting-signature" ? "Signing…" : "Submitting…")
+                    : isUnfunded
+                    ? "Fund Account"
+                    : isInsufficientXlm
+                    ? "Insufficient XLM"
+                    : "Confirm Copy Trade"}
                 </button>
               </div>
+              {isWatching && (
+                <p id="watching-copy-desc" className="sr-only">
+                  You are viewing another address in watch-only mode. Connect your own wallet to copy trades.
+                </p>
+              )}
               <p className="text-center font-body-md text-body-md text-on-surface-variant text-xs">
                 Your wallet signs a buy on the OracleDesk market contract on Stellar Testnet. The trade fails instead of filling below the slippage limit.
               </p>
+              <div className="text-center">
+                <TxReviewPreferenceControl />
+              </div>
             </div>
           </div>
-        </div>
-      </main>
+        </DialogContent>
+      </Dialog>
+    </main>
+      {reviewModel && (
+        <TxReview
+          model={reviewModel.model}
+          changedFrom={reviewModel.changedFrom}
+          onConfirm={() => closeReview(true)}
+          onCancel={() => closeReview(false)}
+        />
+      )}
     </div>
   );
 }
@@ -362,7 +794,9 @@ function CopyTradeContent() {
 export default function CopyTradePage() {
   return (
     <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading Copy Trade...</div>}>
-      <CopyTradeContent />
+      <DevProfiler id="copy-trade">
+        <CopyTradeContent />
+      </DevProfiler>
     </Suspense>
   );
 }
