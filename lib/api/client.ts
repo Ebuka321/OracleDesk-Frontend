@@ -11,6 +11,7 @@ export interface ApiRequestOptions {
   signal?: AbortSignal;
   trace?: TraceCtx;
   headers?: HeadersInit;
+  /** Per-user-action idempotency key (reused across retries of the same action). */
   idempotencyKey?: string;
   stepUp?: { reason: string } | false;
   /** Internal flag to prevent infinite loops when retrying after step-up auth. */
@@ -411,6 +412,11 @@ export function getStoredSessionWallet() {
   if (SESSION_MODE === "cookie") return confirmedSessionWallet;
   const storage = getBrowserStorage();
   return storage?.getItem(TOKEN_KEY) ? storage.getItem(WALLET_KEY) : null;
+}
+
+export function getStoredIdentityKey() {
+  const storage = getBrowserStorage();
+  return storage?.getItem(TOKEN_KEY) ? storage.getItem(IDENTITY_KEY) ?? storage.getItem(WALLET_KEY) : null;
 }
 
 export function clearAuthSession() {

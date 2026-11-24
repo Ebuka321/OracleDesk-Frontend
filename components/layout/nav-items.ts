@@ -1,7 +1,10 @@
+import type { Route } from "next";
+import { routes } from "@/lib/routes";
+
 export interface NavItem {
   label: string;
-  href: string;
-  children?: { label: string; href: string }[];
+  href: Route;
+  children?: { label: string; href: Route }[];
   /** Permission required to view this item in navigation (RBAC) */
   permission?: "admin.read";
 }
@@ -9,33 +12,34 @@ export interface NavItem {
 export const NAV_ITEMS: readonly NavItem[] = [
   {
     label: "Markets",
-    href: "/markets",
+    href: routes.markets(),
     children: [
-      { label: "Live Terminal", href: "/markets/terminal" },
-      { label: "Active Market Detail", href: "/market" },
-      { label: "FPMM Explainer", href: "/learn/fpmm" },
+      { label: "Live Terminal", href: routes.marketsTerminal() },
+      { label: "Active Market Detail", href: routes.market() },
+      { label: "FPMM Explainer", href: routes.learnFpmm() },
+      { label: "Glossary", href: routes.glossary() },
     ],
   },
   {
     label: "Reasoning",
-    href: "/reasoning",
+    href: routes.reasoning(),
   },
   {
     label: "Portfolio",
-    href: "/portfolio",
+    href: routes.portfolio(),
     children: [
-      { label: "Active Positions", href: "/portfolio" },
-      { label: "Analytics", href: "/portfolio/analytics" },
-      { label: "Portfolio & Assets", href: "/portfolio/wallets" },
+      { label: "Active Positions", href: routes.portfolio() },
+      { label: "Analytics", href: routes.portfolioAnalytics() },
+      { label: "Portfolio & Assets", href: routes.portfolioWallets() },
     ],
   },
   {
     label: "Stats",
-    href: "/stats",
+    href: routes.stats(),
   },
   {
     label: "Admin",
-    href: "/admin",
+    href: routes.admin(),
     permission: "admin.read",
   },
 ] as const;

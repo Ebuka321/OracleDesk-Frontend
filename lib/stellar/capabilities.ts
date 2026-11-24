@@ -1,5 +1,6 @@
 import { xdr } from "@stellar/stellar-sdk";
 import { getSpecEntryName } from "./contract-check";
+import { marketCore } from "./clients";
 
 export type TypeSig =
   | { k: "prim"; name: string }
@@ -51,13 +52,27 @@ export interface SpecIndex {
 
 export type Compat = { ok: true } | { ok: false; reason: string };
 
+/**
+ * Whether the deployed market-core exposes a function. The generated bindings
+ * only carry the methods of the pinned contract spec, so a method missing here
+ * means the deployment predates it and the UI must not offer the action.
+ */
+export function marketCoreSupports(fn: "claim_lp_fees" | "transfer_lp"): boolean;
 /** True when the deployed spec exposes every named market-core function. */
+export function marketCoreSupports(entries: readonly xdr.ScSpecEntry[], fnNames: readonly string[]): boolean;
 export function marketCoreSupports(
-  entries: readonly xdr.ScSpecEntry[],
-  fnNames: readonly string[],
+  fnOrEntries: "claim_lp_fees" | "transfer_lp" | readonly xdr.ScSpecEntry[],
+  fnNames?: readonly string[],
 ): boolean {
-  const index = indexSpec(entries);
-  return fnNames.every((name) => index.fns.has(name));
+  if (typeof fnOrEntries === "string") {
+    try {
+      return typeof (marketCore() as unknown as Record<string, unknown>)[fnOrEntries] === "function";
+    } catch {
+      return false;
+    }
+  }
+  const index = indexSpec(fnOrEntries);
+  return (fnNames ?? []).every((name) => index.fns.has(name));
 }
 
 function armOf(obj: unknown): string {
@@ -324,7 +339,9 @@ export function udtCompatible(
         }
         for (let i = 0; i < bc.types.length; i++) {
           const cRes = typeEqual(oc.types[i], bc.types[i], onChain, bundled, visited, mappedErrors);
-          if (!cRes.ok) return { ok: false, reason: `union \`${name}.${bc.name}\` ${cRes.reason}` };
+          if (!cRes.ok) {
+            return { ok: false, reason: `union \`${name}.${bc.name}\` ${cRes.reason}` };
+          }
         }
       }
     }
